@@ -18,9 +18,8 @@ Monitoring de processus dans des containers Docker
 - [ebpf_exporter][3] pourrait être utilisé (cf [exemples][ebpf_exporter_example]) (mais à
   configurer, sachant que la configuration nécessite d’écrire un peu de code C
   pour eBPF)
-  - TODO Déterminer les événements pertinents pour le monitoring à partir de
-    [cette liste][https://github.com/iovisor/bcc/blob/master/docs/reference_guide.md#events--arguments] et des suivantes dans la page
-  - TODO Essayer de monitorer un événement dans un autre processus/container à partir d’un [exemple][seccomp-bpf]
+  - Essayer de monitorer un événement dans un autre processus/container à partir d’un [exemple][seccomp-bpf] : existe déjà dans les scripts du dossier tools de bcc
+  - TODO Installer et faire fonctionner [ebpf_exporter][3].
 
 
 ## Informations accessibles via eBPF et outils dont on pourrait s’inspirer
@@ -46,6 +45,8 @@ Sélectionnés dans [cette liste][bcc-tools]
 - tools/[exitsnoop](tools/exitsnoop.py): Trace process termination (exit and fatal signals). [Examples](tools/exitsnoop_example.txt).
 
 - tools/[funclatency](tools/funclatency.py): Time functions and show their latency distribution. [Examples](tools/funclatency_example.txt).
+  - 
+  - Plusieurs problèmes ce sont posés avec l’outil funclatency : je n’ai pas encore trouvé comment attacher des fonctions arbitraire d’un programme. Par contre, on peut s’attacher aux fonctions de la bibliothèque standard C, ça fonctionne bien ça. L’autre problème est que la documentation indique que les résultats peuvent êtres erronés pour les fonctions récursives et imbriquées ainsi que dans les cas de multithreding (pour cause d’état partagé).
 - tools/[funcslower](tools/funcslower.py): Trace slow kernel or user function calls. [Examples](tools/funcslower_example.txt).
 
 - tools/[opensnoop](tools/opensnoop.py): Trace open() syscalls. [Examples](tools/opensnoop_example.txt).
@@ -64,6 +65,15 @@ Sélectionnés dans [cette liste][bcc-tools]
 - tools/[bashreadline](tools/bashreadline.py): Print entered bash commands system wide. [Examples](tools/bashreadline_example.txt).
 - tools/[sslsniff](tools/sslsniff.py): Sniff OpenSSL written and readed data. [Examples](tools/sslsniff_example.txt).
 - tools/[ttysnoop](tools/ttysnoop.py): Watch live output from a tty or pts device. [Examples](tools/ttysnoop_example.txt).
+
+- Accès aux argument et au type de retour des fonctions de la bibliothèque C standard
+
+- L’exécution de bytecode eBPF nécessite des privilèges plus élevés (en dehors
+  des cas simples où on considère qu’il n’y a pas de risque de sécurité) : on
+  peut quand même désactiver cette possibilité avec `sysctl
+  kernel.unprivileged_bpf_disabled`. Cf aussi [ce commit](https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/commit/?id=1be7f75d1668d6296b80bf35dcf6762393530afc)
+
+- Les appels peuvent être [restreints][seccomp-bpf] assez finemenet par le processus père.
 
 ## Ressources
 
