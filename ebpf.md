@@ -15,11 +15,11 @@ Monitoring de processus dans des containers Docker
 
 ## Pistes
 
-- [ebpf_exporter][3] pourrait être utilisé (cf [exemples][ebpf_exporter_example]) (mais à
+- [ebpf_exporter][ebpf_exporter] pourrait être utilisé (cf [exemples][ebpf_exporter_example]) (mais à
   configurer, sachant que la configuration nécessite d’écrire un peu de code C
   pour eBPF)
   - Essayer de monitorer un événement dans un autre processus/container à partir d’un [exemple][seccomp-bpf] : existe déjà dans les scripts du dossier tools de bcc
-  - TODO Installer et faire fonctionner [ebpf_exporter][3].
+  - TODO Installer et faire fonctionner [ebpf_exporter][ebpf_exporter].
 
 
 ## Informations accessibles via eBPF et outils dont on pourrait s’inspirer
@@ -75,13 +75,55 @@ Sélectionnés dans [cette liste][bcc-tools]
 
 - Les appels peuvent être [restreints][seccomp-bpf] assez finemenet par le processus père.
 
+## [ebpf_exporter][ebpf_exporter]
+
+### Installation
+
+- Nécessite Docker et demande libbcc en version 0.9, mais la version 0.10 est sortie depuis… attention, si les versions ne concordent pas, on a une segfault
+- Problème pour l’ajout de clé aussi, bloqué par le pare feu semble-t-il. Utiliser hkp://keyserver….com:80
+
+### Utilisation
+
+- Avec l’option --debug, il est possible de prévisualiser les données à l’adresse http://localhost:9435/tables 
+
+- TODO Faire une PR pour soumettre ces changements ?
+
+### Avec prometheus
+
+- Voir le fichier ./prometheus.yml
+``` bash
+$ sudo ./release/ebpf_exporter-1.1.0-13-ge548839-dev/ebpf_exporter --config.file ./examples/shrinklat.yaml
+$ ~/Downloads/prometheus-2.10.0.linux-amd64/prometheus --config.file=./ebpf/prometheus.yml
+```
+- Les graphiques sont à l’adresse http://localhost:9090/graph
+
+## Déploiement dans docker
+
+### Ressources
+
+- https://prometheus.io/docs/prometheus/latest/getting_started/ : exemple docker compose
+- https://hub.docker.com/r/prom/prometheus : image docker officielle
+
+### « Coller » deux container (par exemple pour ajouter un débugger)
+
+- https://stackoverflow.com/questions/31007934/strace-to-monitor-dockerized-application-activity, https://medium.com/@rothgar/how-to-debug-a-running-docker-container-from-a-separate-container-983f11740dc6, https://gist.github.com/justincormack/f2444fbdf210b05d4f7baabe6fcd219a
+
+- TODO Tester
+
+### Problème : exécuter un bcctool dans un container
+
+Pistes :
+
+ - https://www.youtube.com/watch?v=Yrjk4W-F9iY
+ - http://www.adelzaalouk.me/2017/security-bpf-docker-cillium/#security-policies-using-ebpf
+
 ## Ressources
 
 ### https://medium.com/@andrewhowdencom/adventures-with-ebpf-and-prometheus-6a59dd170b26
 
 - Prometheus <-> Exporter <-> eBPF
 - Nombreux exporter existants, peut-être que
-  [ebpf_exporter][3] fait une partie de ce qu’on veut
+  [ebpf_exporter][ebpf_exporter] fait une partie de ce qu’on veut
   
 
 ### [Restriction des appels systèmes][seccomp-bpf]
@@ -104,7 +146,7 @@ Sélectionnés dans [cette liste][bcc-tools]
 TODO
 
 [seccomp-bpf]: https://blog.yadutaf.fr/2014/05/29/introduction-to-seccomp-bpf-linux-syscall-filter/
-[3]: https://github.com/cloudflare/ebpf_exporter
+[ebpf_exporter]: https://github.com/cloudflare/ebpf_exporter
 [ebpf_exporter_example]: https://github.com/cloudflare/ebpf_exporter#examples
 [5]: https://kubernetes.io/blog/2017/12/using-ebpf-in-kubernetes/
 [bcc-tools]: https://github.com/iovisor/bcc/blob/master/README.md#tools

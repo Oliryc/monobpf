@@ -1,0 +1,7 @@
+global:
+  scrape_interval:     1s
+scrape_configs:
+  - job_name: "eBPF"
+    static_configs:
+    - targets:
+      - "localhost:9435"
