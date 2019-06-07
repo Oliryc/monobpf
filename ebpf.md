@@ -13,7 +13,7 @@ Monitoring de processus dans des containers Docker
 
 3. Voir l’intégration avec Kubernetes
 
-### Suite aux retour
+### Suite aux retours
 
 - Collecter un maximum niveau réseau (type de paquet) puis diskio
 - Voir quelle granularité on peut avoir (jusqu’au module nodeJS ?)
@@ -36,6 +36,8 @@ Monitoring de processus dans des containers Docker
     - TODO Voir si on peut la restreindre à un processus
 
 - TODO Outils pour explorer le contenu des paquets : [xdpcap][xdpcap], cf [contexte][xdpcap-context]
+
+- TODO Faire un schéma récapitulatif des outils utilisés (container docker, prometheus, hôte…)
 
 ## Informations accessibles via eBPF et outils dont on pourrait s’inspirer
 
@@ -117,6 +119,7 @@ Sélectionnés dans [cette liste][bcc-tools]
 $ sudo ./release/ebpf_exporter-1.1.0-13-ge548839-dev/ebpf_exporter --config.file ./examples/shrinklat.yaml
 $ ~/Downloads/prometheus-2.10.0.linux-amd64/prometheus --config.file=./ebpf/prometheus.yml
 ```
+
 - Les graphiques sont à l’adresse http://localhost:9090/graph
 
 ## Déploiement dans docker
@@ -138,6 +141,8 @@ Pistes :
 
  - https://www.youtube.com/watch?v=Yrjk4W-F9iY
  - http://www.adelzaalouk.me/2017/security-bpf-docker-cillium/#security-policies-using-ebpf
+
+ Finalement, on exécutera les bcctools en local dans un premier temps, on a quand même accès à un certain nombre d’informations
 
 ## Ressources
 
