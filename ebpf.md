@@ -27,7 +27,15 @@ Monitoring de processus dans des containers Docker
   - Installer et faire fonctionner [ebpf_exporter][ebpf_exporter].
 - Métriques à collecter :
   - TODO Nœud nodeJS : https://github.com/iovisor/bcc/blob/master/tools/tplist.py
+  - TODO Suivi du GC Java
   - TODO Outil stackcount
+- TODO Regarder les exemples :
+  - TODO https://github.com/cloudflare/ebpf_exporter/blob/master/examples/eaddrinuse.yaml -> détection d’attaque (parce qu’à court de socket libre?)
+  - TODO https://github.com/cloudflare/ebpf_exporter/blob/master/examples/runqlat.yaml mesure de latence
+  - TODO https://github.com/cloudflare/ebpf_exporter/blob/master/examples/ipcstat.yaml mesure d’utilisation du CPU plus fidèle
+    - TODO Voir si on peut la restreindre à un processus
+
+- TODO Outils pour explorer le contenu des paquets : [xdpcap][xdpcap], cf [contexte][xdpcap-context]
 
 ## Informations accessibles via eBPF et outils dont on pourrait s’inspirer
 
@@ -38,7 +46,7 @@ Sélectionnés dans [cette liste][bcc-tools]
 - tools/[biosnoop](tools/biosnoop.py): Trace block device I/O with PID and latency. [Examples](tools/biosnoop_example.txt).
 - tools/[filetop](tools/filetop.py): File reads and writes by filename and process. Top for files. [Examples](tools/filetop_example.txt).
 
-### TCP
+### TCP : on accède à une structure de socket et on peut se hooker sur les principaux appels systèmes pour suivre la connexion
 
 * tools/[tcpconnlat](tools/tcpconnlat.py): Trace TCP active connection latency (connect()). [Examples](tools/tcpconnlat_example.txt).
 * tools/[tcptop](tools/tcptop.py): Summarize TCP send/recv throughput by host. Top for TCP. [Examples](tools/tcptop_example.txt).
@@ -81,11 +89,19 @@ Sélectionnés dans [cette liste][bcc-tools]
 
 - Les appels peuvent être [restreints][seccomp-bpf] assez finemenet par le processus père.
 
+## Terminologie
+
+- BPF_TABLE : macro bas niveau, utilisée plutôt par les macros suivantes
+- BPF_HASH : tableau associatif
+- BPF_ARRAY : tableau, accès et mise à jour rapide
+- BPF_HISTOGRAMME : réalisation d’histogrammes avec la méthode increment pour modifier l’effectif d’une catégorie
+
 ## [ebpf_exporter][ebpf_exporter]
 
 ### Installation
 
-- Nécessite Docker et demande libbcc en version 0.9, mais la version 0.10 est sortie depuis… attention, si les versions ne concordent pas, on a une segfault
+- Le mieux est d’utiliser le ppa fournit avec [les instructions d’installation][bcc-install]
+- Nécessite Docker et demande libbcc en version 0.9, mais la version 0.10 est sortie depuis… attention, si les versions ne concordent pas, on a une segfault. Appliquer le patch ./ebpf_exporter.patch
 - Problème pour l’ajout de clé aussi, bloqué par le pare feu semble-t-il. Utiliser hkp://keyserver….com:80
 
 ### Utilisation
@@ -151,8 +167,12 @@ Pistes :
 
 TODO
 
+[bcc]: http://iovisor.github.io/bcc/
+[bcc-install]: https://github.com/iovisor/bcc/blob/master/INSTALL.md
 [seccomp-bpf]: https://blog.yadutaf.fr/2014/05/29/introduction-to-seccomp-bpf-linux-syscall-filter/
 [ebpf_exporter]: https://github.com/cloudflare/ebpf_exporter
 [ebpf_exporter_example]: https://github.com/cloudflare/ebpf_exporter#examples
 [5]: https://kubernetes.io/blog/2017/12/using-ebpf-in-kubernetes/
 [bcc-tools]: https://github.com/iovisor/bcc/blob/master/README.md#tools
+[xdpcap]: https://github.com/cloudflare/xdpcap
+[xdpcap-context]: https://blog.cloudflare.com/xdpcap/
