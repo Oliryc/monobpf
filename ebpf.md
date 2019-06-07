@@ -13,14 +13,21 @@ Monitoring de processus dans des containers Docker
 
 3. Voir l’intégration avec Kubernetes
 
+### Suite aux retour
+
+- Collecter un maximum niveau réseau (type de paquet) puis diskio
+- Voir quelle granularité on peut avoir (jusqu’au module nodeJS ?)
+
 ## Pistes
 
 - [ebpf_exporter][ebpf_exporter] pourrait être utilisé (cf [exemples][ebpf_exporter_example]) (mais à
   configurer, sachant que la configuration nécessite d’écrire un peu de code C
   pour eBPF)
   - Essayer de monitorer un événement dans un autre processus/container à partir d’un [exemple][seccomp-bpf] : existe déjà dans les scripts du dossier tools de bcc
-  - TODO Installer et faire fonctionner [ebpf_exporter][ebpf_exporter].
-
+  - Installer et faire fonctionner [ebpf_exporter][ebpf_exporter].
+- Métriques à collecter :
+  - TODO Nœud nodeJS : https://github.com/iovisor/bcc/blob/master/tools/tplist.py
+  - TODO Outil stackcount
 
 ## Informations accessibles via eBPF et outils dont on pourrait s’inspirer
 
@@ -33,10 +40,10 @@ Sélectionnés dans [cette liste][bcc-tools]
 
 ### TCP
 
-- tools/[tcpconnlat](tools/tcpconnlat.py): Trace TCP active connection latency (connect()). [Examples](tools/tcpconnlat_example.txt).
-- tools/[tcptop](tools/tcptop.py): Summarize TCP send/recv throughput by host. Top for TCP. [Examples](tools/tcptop_example.txt).
-- tools/[tcplife](tools/tcplife.py): Trace TCP sessions and summarize lifespan. [Examples](tools/tcplife_example.txt).
-- tools/[tcptracer](tools/tcptracer.py): Trace TCP established connections (connect(), accept(), close()). [Examples](tools/tcptracer_example.txt).
+* tools/[tcpconnlat](tools/tcpconnlat.py): Trace TCP active connection latency (connect()). [Examples](tools/tcpconnlat_example.txt).
+* tools/[tcptop](tools/tcptop.py): Summarize TCP send/recv throughput by host. Top for TCP. [Examples](tools/tcptop_example.txt).
+* tools/[tcplife](tools/tcplife.py): Trace TCP sessions and summarize lifespan. [Examples](tools/tcplife_example.txt).
+* tools/[tcptracer](tools/tcptracer.py): Trace TCP established connections (connect(), accept(), close()). [Examples](tools/tcptracer_example.txt).
 
 ### Exécution & CPU
 
@@ -45,7 +52,6 @@ Sélectionnés dans [cette liste][bcc-tools]
 - tools/[exitsnoop](tools/exitsnoop.py): Trace process termination (exit and fatal signals). [Examples](tools/exitsnoop_example.txt).
 
 - tools/[funclatency](tools/funclatency.py): Time functions and show their latency distribution. [Examples](tools/funclatency_example.txt).
-  - 
   - Plusieurs problèmes ce sont posés avec l’outil funclatency : je n’ai pas encore trouvé comment attacher des fonctions arbitraire d’un programme. Par contre, on peut s’attacher aux fonctions de la bibliothèque standard C, ça fonctionne bien ça. L’autre problème est que la documentation indique que les résultats peuvent êtres erronés pour les fonctions récursives et imbriquées ainsi que dans les cas de multithreding (pour cause d’état partagé).
 - tools/[funcslower](tools/funcslower.py): Trace slow kernel or user function calls. [Examples](tools/funcslower_example.txt).
 
