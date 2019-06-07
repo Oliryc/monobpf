@@ -1,0 +1,17 @@
+diff --git a/Dockerfile b/Dockerfile
+index 96dc249..9c71088 100644
+--- a/Dockerfile
++++ b/Dockerfile
+@@ -3,10 +3,10 @@ FROM golang:1.12.1-stretch
+ # Doing mostly what CI is doing here
+ RUN apt-get update && \
+     apt-get install -y apt-transport-https && \
+-    apt-key adv --keyserver keyserver.ubuntu.com --recv-keys 648A4A16A23015EEF4A66B8E4052245BD4284CDD && \
++    apt-key adv --keyserver hkp://keyserver.ubuntu.com:80 --recv-keys 648A4A16A23015EEF4A66B8E4052245BD4284CDD && \
+     echo "deb https://repo.iovisor.org/apt/xenial xenial main" > /etc/apt/sources.list.d/iovisor.list && \
+     apt-get update && \
+-    apt-get install -y libbcc=0.9.0-1 linux-headers-amd64
++    apt-get install -y libbcc=0.10.0-1 linux-headers-amd64
+ 
+ COPY ./ /go/ebpf_exporter
+ 
