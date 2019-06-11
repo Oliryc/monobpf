@@ -8,17 +8,13 @@ programs:
           table: start
           labels:
             - name: socket_addr
-              size: 64
+              size: 8
               decoders:
-                - name: ksym
-            - name: command
-              size: 128
-              decoders:
-                - name: string
-                - name: regexp
-                  regexps:
-                    - ^systemd-journal$
-                    - ^syslog-ng$
+                - name: uint
+                  #- name: command
+                  #  size: 64
+                  #  decoders:
+                  #    - name: uint
     kprobes:
       tcp_v4_connect: trace_connect
       tcp_v6_connect: trace_connect

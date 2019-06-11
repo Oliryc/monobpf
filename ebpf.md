@@ -39,6 +39,8 @@ Monitoring de processus dans des containers Docker
 
 - TODO Faire un schéma récapitulatif des outils utilisés (container docker, prometheus, hôte…)
 
+- TODO Regarder [les exemples du dépôt bcc][bcc-example]
+
 ## Informations accessibles via eBPF et outils dont on pourrait s’inspirer
 
 Sélectionnés dans [cette liste][bcc-tools]
@@ -174,6 +176,7 @@ TODO
 
 [bcc]: http://iovisor.github.io/bcc/
 [bcc-install]: https://github.com/iovisor/bcc/blob/master/INSTALL.md
+[bcc-example]: https://github.com/iovisor/bcc/blob/master/examples/networking/
 [seccomp-bpf]: https://blog.yadutaf.fr/2014/05/29/introduction-to-seccomp-bpf-linux-syscall-filter/
 [ebpf_exporter]: https://github.com/cloudflare/ebpf_exporter
 [ebpf_exporter_example]: https://github.com/cloudflare/ebpf_exporter#examples
@@ -181,3 +184,4 @@ TODO
 [bcc-tools]: https://github.com/iovisor/bcc/blob/master/README.md#tools
 [xdpcap]: https://github.com/cloudflare/xdpcap
 [xdpcap-context]: https://blog.cloudflare.com/xdpcap/
+
