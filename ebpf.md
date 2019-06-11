@@ -29,17 +29,34 @@ Monitoring de processus dans des containers Docker
   - TODO Nœud nodeJS : https://github.com/iovisor/bcc/blob/master/tools/tplist.py
   - TODO Suivi du GC Java
   - TODO Outil stackcount
-- TODO Regarder les exemples :
-  - TODO https://github.com/cloudflare/ebpf_exporter/blob/master/examples/eaddrinuse.yaml -> détection d’attaque (parce qu’à court de socket libre?)
-  - TODO https://github.com/cloudflare/ebpf_exporter/blob/master/examples/runqlat.yaml mesure de latence
-  - TODO https://github.com/cloudflare/ebpf_exporter/blob/master/examples/ipcstat.yaml mesure d’utilisation du CPU plus fidèle
-    - TODO Voir si on peut la restreindre à un processus
+- Regarder les exemples :
+  - https://github.com/cloudflare/ebpf_exporter/blob/master/examples/eaddrinuse.yaml -> détection d’attaque (parce qu’à court de socket libre?)
+  - https://github.com/cloudflare/ebpf_exporter/blob/master/examples/runqlat.yaml mesure de latence
+  - https://github.com/cloudflare/ebpf_exporter/blob/master/examples/ipcstat.yaml mesure d’utilisation du CPU plus fidèle
+    - Voir si on peut la restreindre à un processus
 
 - TODO Outils pour explorer le contenu des paquets : [xdpcap][xdpcap], cf [contexte][xdpcap-context]
 
 - TODO Faire un schéma récapitulatif des outils utilisés (container docker, prometheus, hôte…)
+  Cf ![doc prometheus par exemple](https://prometheus.io/assets/architecture.png)
 
-- TODO Regarder [les exemples du dépôt bcc][bcc-example]
+- TODO Regarder ce qu’on a avec NodeJS
+
+- TODO Regarder [les exemples du dépôt bcc][bcc-example] 
+  - TODO Creuser ce qui est possible avec les paquets et le contenu HTTP
+
+
+### Limites d’ebpf_exporter
+
+- Il est parfois utile de générer le code C qui sera compilé en bytecode eBPF (par exemple pour filtrer les informations connectées en amont, surtout dans la mesure où le langage C utilisé avec eBPF est limité (pas de boucles !)), ce que ne permets pas ebpf_exporter.
+- Solutions :
+  - Écrire un outil à part en python ou go. Avantage : flexibilié. Inconvénient : nécessite de réécrire la communication Prometheus (cf [writing prometheus exporter][prom-exporter])
+    - En Go, on peut peut-être réutiliser le paquet https://github.com/cloudflare/ebpf_exporter/blob/master/exporter
+    - Cf aussi https://github.com/iovisor/gobpf
+  - Modifier ebpf_exporter pour qu’il supporte plus de cas d’usage… Incovénient : nécessite de se plonger dans la base de code
+- Question : le filtrage doit-il s’effectuer par une rêquête vers ebpf exporter
+
+[prom-exporter]: https://prometheus.io/docs/instrumenting/writing_exporters/
 
 ## Informations accessibles via eBPF et outils dont on pourrait s’inspirer
 
@@ -158,6 +175,9 @@ $ ~/Downloads/prometheus-2.10.0.linux-amd64/prometheus --config.file=./ebpf/prom
 ### Attention
 
 - les indirections ne sont pas toujours bien gérées par le compilateur, il faut parfois passer par une variable intermédiaire
+- Les boucles ne sont pas autorisées, on peut les [unroller][unroll-loop], avec `#pragma GCC unroll n` **en théorie**.
+
+[unroll-loop]: https://stackoverflow.com/questions/56107380/is-loops-allowed-in-ebpf-kernel-program
 
 ### Problème : exécuter un bcctool dans un container
 
