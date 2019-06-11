@@ -124,6 +124,22 @@ $ ~/Downloads/prometheus-2.10.0.linux-amd64/prometheus --config.file=./ebpf/prom
 
 - Les graphiques sont à l’adresse http://localhost:9090/graph
 
+### Limites
+
+- L’export des données est limité :
+  - Les BPF_HASH doivent avoir des valeurs de type u64 (alors que le type des
+    clés est libre), contrainte qu’on n’a pas en utilisant directement bcc.
+    Pourrait se contourner en extrayant les valeurs d’intérêt dans un BPF_HASH
+    séparé. Cette limitation est suggéré par la [doc][ebpf_exporter-doc-hash] «
+    Maps coming from the kernel are binary encoded. Values are always u64, but
+    keys can be primitive types like u64 or structs. »
+
+[ebpf_exporter-doc-hash]: https://github.com/cloudflare/ebpf_exporter/#labels
+
+  - Il semble impossible de récupérer des valeurs avec [perf_submit][bcc-doc-perf_submit]. Pas d’exemple ou d’explication trouvé.
+
+[ebpf-doc-perf_submit]: https://github.com/iovisor/bcc/blob/master/docs/reference_guide.md#3-perf_submit
+
 ## Déploiement dans docker
 
 ### Ressources
@@ -136,6 +152,12 @@ $ ~/Downloads/prometheus-2.10.0.linux-amd64/prometheus --config.file=./ebpf/prom
 - https://stackoverflow.com/questions/31007934/strace-to-monitor-dockerized-application-activity, https://medium.com/@rothgar/how-to-debug-a-running-docker-container-from-a-separate-container-983f11740dc6, https://gist.github.com/justincormack/f2444fbdf210b05d4f7baabe6fcd219a
 
 - TODO Tester
+
+## Programmation avec bcc
+
+### Attention
+
+- les indirections ne sont pas toujours bien gérées par le compilateur, il faut parfois passer par une variable intermédiaire
 
 ### Problème : exécuter un bcctool dans un container
 

@@ -4,17 +4,13 @@ programs:
     metrics:
       counters:
         - name: tcp_latency
-          help: TCP latency per process
-          table: dummy
+          help: Last TCP latency (in µs) for each process
+          table: pid_lat
           labels:
-            - name: socket_addr
-              size: 8
+            - name: pid
+              size: 4
               decoders:
                 - name: uint
-                  #- name: command
-                  #  size: 64
-                  #  decoders:
-                  #    - name: uint
     kprobes:
       tcp_v4_connect: trace_connect
       tcp_v6_connect: trace_connect
@@ -30,7 +26,10 @@ programs:
             char task[TASK_COMM_LEN];
         };
         BPF_HASH(start, struct sock *, struct info_t);
-        BPF_HASH(dummy, struct sock *, u64);
+
+        // average latency by pid
+        BPF_HASH(pid_lat, u32, u64);
+
         // separate data structs for ipv4 and ipv6
         struct ipv4_data_t {
             u64 ts_us;
@@ -62,7 +61,6 @@ programs:
             info.ts = bpf_ktime_get_ns();
             bpf_get_current_comm(&info.task, sizeof(info.task));
             start.update(&sk, &info);
-            dummy.increment(sk);
             return 0;
         };
         // See tcp_v4_do_rcv() and tcp_v6_do_rcv(). So TCP_ESTBALISHED and TCP_LISTEN
@@ -82,6 +80,17 @@ programs:
             u64 ts = infop->ts;
             u64 now = bpf_ktime_get_ns();
             u64 delta_us = (now - ts) / 1000ul;
+
+            // Record latency
+            u64 latency_val = delta_us;
+            u32 current_pid = infop->pid;
+            u64 *last_latency_val_p = pid_lat.lookup(&current_pid);
+            if (last_latency_val_p != 0) {
+              pid_lat.update(&current_pid, &latency_val);
+            } else {
+              pid_lat.insert(&current_pid, &latency_val);
+            }
+
             #ifdef MATENCY
             if ( delta_us < DURATION_US ) {
                 return 0; // connect latency is below latency filter minimum
