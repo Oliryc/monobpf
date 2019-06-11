@@ -20,6 +20,12 @@ programs:
         #include <net/sock.h>
         #include <net/tcp_states.h>
         #include <bcc/proto.h>
+
+        // Pid to monitor ADAPT THIS TO YOUR NEED 
+        // Must be terminated by 0
+        //u32 pid_whitelist[] = {18453, 0};
+        u32 pid_whitelist = 18453;
+
         struct info_t {
             u64 ts;
             u32 pid;
@@ -84,12 +90,25 @@ programs:
             // Record latency
             u64 latency_val = delta_us;
             u32 current_pid = infop->pid;
-            u64 *last_latency_val_p = pid_lat.lookup(&current_pid);
-            if (last_latency_val_p != 0) {
-              pid_lat.update(&current_pid, &latency_val);
-            } else {
-              pid_lat.insert(&current_pid, &latency_val);
+            // Take only pid in whitelist
+            int i = 0;
+            u32 pid_in_whitelist = pid_whitelist;
+            //#pragma clang loop unroll(full)
+            #pragma GCC unroll 1
+            /*
+            for (;pid_in_whitelist != 0 && pid_in_whitelist != current_pid; i++) {
+              //pid_in_whitelist = pid_whitelist[i++];
             }
+            //pid_in_whitelist = pid_whitelist[i];
+            if (1 || pid_in_whitelist != 0) { // add only if we are interested by this pid
+              u64 *last_latency_val_p = pid_lat.lookup(&current_pid);
+              if (last_latency_val_p != 0) {
+                pid_lat.update(&current_pid, &latency_val);
+              } else {
+                pid_lat.insert(&current_pid, &latency_val);
+              }
+            }
+            */
 
             #ifdef MATENCY
             if ( delta_us < DURATION_US ) {
