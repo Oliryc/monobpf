@@ -45,6 +45,9 @@ Monitoring de processus dans des containers Docker
 - TODO Regarder [les exemples du dépôt bcc][bcc-example] 
   - TODO Creuser ce qui est possible avec les paquets et le contenu HTTP
 
+- TODO Regarder ce qui est accessible de manière générique (GET path?query ?)
+
+- TODO Module nodejs : dans https://github.com/interledgerjs
 
 ### Limites d’ebpf_exporter
 
@@ -53,10 +56,17 @@ Monitoring de processus dans des containers Docker
   - Écrire un outil à part en python ou go. Avantage : flexibilié. Inconvénient : nécessite de réécrire la communication Prometheus (cf [writing prometheus exporter][prom-exporter])
     - En Go, on peut peut-être réutiliser le paquet https://github.com/cloudflare/ebpf_exporter/blob/master/exporter
     - Cf aussi https://github.com/iovisor/gobpf
+    - Go ou Python [supportés](https://prometheus.io/docs/instrumenting/clientlibs/) dans Prometheus
   - Modifier ebpf_exporter pour qu’il supporte plus de cas d’usage… Incovénient : nécessite de se plonger dans la base de code
+    - Utilisation des [templates](https://golang.org/pkg/text/template/) go ? Permettrait de générer une partie du code fastidieux (filtrage par pid par exemple)
+    - Reste le problème de l’extraction de donnée qui ne sont pas de directement sous forme de scalaire (BPF_HASH(myhash, key_t, non_u64_value_t)))
+    - Comment associer les données en post-traitement ? (pid <-> nom processus par exemple, lourd, fastidieux et pas toujours possible de le faire dans le bytecode eBPF)
+  - [Bonne pratiques](https://prometheus.io/docs/instrumenting/writing_exporters/) des exporter prometheus (système métrique, configuration en yml, label avec une cardinalité faible et connue)
 - Question : le filtrage doit-il s’effectuer par une rêquête vers ebpf exporter
 
 [prom-exporter]: https://prometheus.io/docs/instrumenting/writing_exporters/
+
+### Ressources pour l’écriture d’un exporter prometheus
 
 ## Informations accessibles via eBPF et outils dont on pourrait s’inspirer
 
@@ -110,13 +120,6 @@ Sélectionnés dans [cette liste][bcc-tools]
 
 - Les appels peuvent être [restreints][seccomp-bpf] assez finemenet par le processus père.
 
-## Terminologie
-
-- BPF_TABLE : macro bas niveau, utilisée plutôt par les macros suivantes
-- BPF_HASH : tableau associatif
-- BPF_ARRAY : tableau, accès et mise à jour rapide
-- BPF_HISTOGRAMME : réalisation d’histogrammes avec la méthode increment pour modifier l’effectif d’une catégorie
-
 ## [ebpf_exporter][ebpf_exporter]
 
 ### Installation
@@ -140,6 +143,21 @@ $ ~/Downloads/prometheus-2.10.0.linux-amd64/prometheus --config.file=./ebpf/prom
 ```
 
 - Les graphiques sont à l’adresse http://localhost:9090/graph
+
+### Fichier de test
+
+- L’exemple [tcpconnlat.py][tcpconnlat] a été adapté dans [ce fichier](./exporter_tpcconnlat.yml) de configuration yaml pour ebpf_exporter.
+- On a le temps nécessaire pour établir la connexion par pid
+- Il a fallu créer un second BPF_HASH pour associer les valeurs au pid, parce
+  que le BPF_HASH utilisé initialement par le programme a une structure en
+  valeur, ce qu’ebpf_exporter ne support pas.
+
+- Il pourrait être plus intéressant d’avoir la durée totale de la connexion et
+  pas seulement le temps de connexion avec tcplife. *Point intéressant de
+  tcplife : les données émises et lues sur la connexion tcp sont déduites de
+  `tcp_info` à la fermeture de la connexion*
+
+[tcpconnlat]: https://github.com/iovisor/bcc/blob/master/tools/tcpconnlat.py
 
 ### Limites
 
@@ -168,9 +186,17 @@ $ ~/Downloads/prometheus-2.10.0.linux-amd64/prometheus --config.file=./ebpf/prom
 
 - https://stackoverflow.com/questions/31007934/strace-to-monitor-dockerized-application-activity, https://medium.com/@rothgar/how-to-debug-a-running-docker-container-from-a-separate-container-983f11740dc6, https://gist.github.com/justincormack/f2444fbdf210b05d4f7baabe6fcd219a
 
-- TODO Tester
+- Tester : difficile à tester, il semble impossible d’exécuter du bytecode eBPF depuis un container
 
 ## Programmation avec bcc
+
+### Terminologie
+
+- BPF_TABLE : macro bas niveau, utilisée plutôt par les macros suivantes
+- BPF_HASH : tableau associatif
+- BPF_ARRAY : tableau, accès et mise à jour rapide
+- BPF_HISTOGRAMME : réalisation d’histogrammes avec la méthode increment pour modifier l’effectif d’une catégorie
+
 
 ### Attention
 
@@ -187,6 +213,44 @@ Pistes :
  - http://www.adelzaalouk.me/2017/security-bpf-docker-cillium/#security-policies-using-ebpf
 
  Finalement, on exécutera les bcctools en local dans un premier temps, on a quand même accès à un certain nombre d’informations
+
+## Monitoring NodeJS
+
+- [Invasif][invasive-nodejs] avec eBPF/bcc trace
+
+[invasive-nodejs]: https://medium.com/sthima-insights/we-just-got-a-new-super-power-runtime-usdt-comes-to-linux-814dc47e909f
+
+### USDT tracing
+
+- `sudo /usr/share/bcc/tools/tplist /usr/bin/node` n’affiche aucun tracepoint  
+  - TODO Essayer de recompiler node
+
+#### Autres ressources
+
+TODO
+
+- https://github.com/prometheus/node_exporter (en complément ?)
+- http://www.brendangregg.com/blog/2016-10-12/linux-bcc-nodejs-usdt.html, support de https://github.com/iovisor/bcc/blob/master/examples/tracing/nodejs_http_server.py
+- http://www.brendangregg.com/Slides/LSFMM2019_BPF_Observability.pdf, résumé par https://lwn.net/Articles/787131/
+
+#### Recompiler nodejs
+
+Cf [article][ebpf-node], qui porte sur une version plus ancienne de node. [Instruction de la documentation officielle](https://github.com/nodejs/node/blob/master/BUILDING.md#building-nodejs-on-supported-platforms)
+
+```
+sudo apt-get install systemtap-sdt-dev
+wget https://nodejs.org/dist/v10.16.0/node-v10.16.0.tar.gz
+tar xvf node-v10.16.0.tar.gz
+cd node-v10.16.0/
+./configure
+make -j8  # Long…
+```
+
+### Existant
+
+TODO Regarder
+
+- https://github.com/slanatech/swagger-stats
 
 ## Ressources
 
@@ -226,4 +290,5 @@ TODO
 [bcc-tools]: https://github.com/iovisor/bcc/blob/master/README.md#tools
 [xdpcap]: https://github.com/cloudflare/xdpcap
 [xdpcap-context]: https://blog.cloudflare.com/xdpcap/
+[ebpf-node]: http://www.brendangregg.com/blog/2016-10-12/linux-bcc-nodejs-usdt.html
 
