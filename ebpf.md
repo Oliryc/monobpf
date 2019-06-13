@@ -227,24 +227,58 @@ Pistes :
 
 #### Autres ressources
 
-TODO
-
 - https://github.com/prometheus/node_exporter (en complément ?)
 - http://www.brendangregg.com/blog/2016-10-12/linux-bcc-nodejs-usdt.html, support de https://github.com/iovisor/bcc/blob/master/examples/tracing/nodejs_http_server.py
-- http://www.brendangregg.com/Slides/LSFMM2019_BPF_Observability.pdf, résumé par https://lwn.net/Articles/787131/
 
 #### Recompiler nodejs
 
-Cf [article][ebpf-node], qui porte sur une version plus ancienne de node. [Instruction de la documentation officielle](https://github.com/nodejs/node/blob/master/BUILDING.md#building-nodejs-on-supported-platforms)
+Cf [article][ebpf-node], qui porte sur une version plus ancienne de nodejs (version 6). [Instruction de la documentation officielle](https://github.com/nodejs/node/blob/master/BUILDING.md#building-nodejs-on-supported-platforms)
+
+Le point important est le `--with-dtrace`, qui n’est pas activé par défaut, ni dans la version 10, ni dans la version 12 (d’où la nécessité de recompiler nodeJS).
 
 ```
 sudo apt-get install systemtap-sdt-dev
 wget https://nodejs.org/dist/v10.16.0/node-v10.16.0.tar.gz
 tar xvf node-v10.16.0.tar.gz
 cd node-v10.16.0/
-./configure
-make -j8  # Long…
+./configure --width-trace
+make -j8 # Mettre le nombre de cœurs de la machine
 ```
+
+Installer bcc
+```
+sudo apt-key adv --keyserver hkp://keyserver.ubuntu.com:80 --recv-keys 4052245BD4284CDD
+echo "deb https://repo.iovisor.org/apt/$(lsb_release -cs) $(lsb_release -cs) main" | sudo tee /etc/apt/sources.list.d/iovisor.list
+sudo apt-get update
+sudo apt-get install bcc-tools libbcc-examples linux-headers-$(uname -r)
+```
+
+Pour vérifier qu’on a bien les tracepoint, la commande `sudo /usr/share/bcc/tools/tplist -l ~/Documents/node-v10.16.0/node` doit afficher quelque chose comme :
+  /home/sedan/Documents/node-v10.16.0/node node:gc__start
+  /home/sedan/Documents/node-v10.16.0/node node:gc__done
+  /home/sedan/Documents/node-v10.16.0/node node:http__server__response
+  /home/sedan/Documents/node-v10.16.0/node node:net__server__connection
+  /home/sedan/Documents/node-v10.16.0/node node:net__stream__end
+  /home/sedan/Documents/node-v10.16.0/node node:http__client__response
+  /home/sedan/Documents/node-v10.16.0/node node:http__client__request
+  /home/sedan/Documents/node-v10.16.0/node node:http__server__request
+
+
+### Possibilités
+
+TODO
+
+#### node:gc__start
+#### node:gc__done
+#### node:http__server__response
+#### node:net__server__connection
+#### node:net__stream__end
+#### node:http__client__response
+#### node:http__client__request
+#### node:http__server__request
+
+
+
 
 ### Existant
 
@@ -277,6 +311,10 @@ TODO Regarder
   applications sont envisagées (TODO Les comprendre)
 
 ### https://medium.com/@andrewhowdencom/coming-to-grips-with-ebpf-4a5434591167
+
+TODO
+
+### http://www.brendangregg.com/Slides/LSFMM2019_BPF_Observability.pdf, résumé par https://lwn.net/Articles/787131/
 
 TODO
 
