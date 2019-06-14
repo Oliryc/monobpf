@@ -1,12 +1,14 @@
 #!/usr/bin/python
 #
-# nodejs_http_server    Basic example of node.js USDT tracing.
+# nodejs_gc_tracing     Time GC calls
 #                       For Linux, uses BCC, BPF. Embedded C.
 #
-# USAGE: nodejs_http_server PID
+# USAGE: nodejs_gc_tracing PID
 #
 # Copyright 2016 Netflix, Inc.
 # Licensed under the Apache License, Version 2.0 (the "License")
+
+# Based on https://github.com/iovisor/bcc/blob/master/examples/tracing/nodejs_http_server.py
 
 from __future__ import print_function
 from bcc import BPF, USDT
@@ -14,10 +16,10 @@ from bcc.utils import printb
 import sys
 
 if len(sys.argv) < 2:
-    print("USAGE: nodejs_http_server PID")
+    print("USAGE: {} PID".format(sys.argv[0]))
     exit()
 pid = sys.argv[1]
-debug = 0
+debug = 1
 
 # load BPF program
 bpf_text = """
@@ -25,7 +27,7 @@ bpf_text = """
 int do_trace(struct pt_regs *ctx) {
     uint64_t addr;
     char path[128]={0};
-    bpf_usdt_readarg(6, ctx, &addr);
+    bpf_usdt_readarg(2, ctx, &addr);
     bpf_probe_read(&path, sizeof(path), (void *)addr);
     bpf_trace_printk("path:%s\\n", path);
     return 0;
@@ -34,7 +36,7 @@ int do_trace(struct pt_regs *ctx) {
 
 # enable USDT probe from given PID
 u = USDT(pid=int(pid))
-u.enable_probe(probe="http__server__request", fn_name="do_trace")
+u.enable_probe(probe="gc__start", fn_name="do_trace")
 if debug:
     print(u.get_text())
     print(bpf_text)
