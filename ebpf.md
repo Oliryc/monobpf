@@ -268,13 +268,21 @@ Pour vérifier qu’on a bien les tracepoint, la commande `sudo /usr/share/bcc/t
 
 TODO
 
+
 #### node:gc__start
+
 #### node:gc__done
+
 #### node:http__server__response
+
 #### node:net__server__connection
+
 #### node:net__stream__end
+
 #### node:http__client__response
+
 #### node:http__client__request
+
 #### node:http__server__request
 
 
