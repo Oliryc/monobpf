@@ -3,19 +3,85 @@ programs:
   - name: tcp_connexion_latency
     metrics:
       counters:
-        - name: tcp_latency
-          help: Last TCP latency (in µs) for each process
-          table: pid_lat
+        - name: latency_ipv4
+          help: tcp4 connection latency
+          table: pid_lat4
           labels:
+            - name: time
+              size: 8
+              decoders:
+                - name: uint
             - name: pid
               size: 4
               decoders:
                 - name: uint
+            - name: source_addr
+              size: 4
+              decoders:
+                - name: uint
+            - name: dst_addr
+              size: 4
+              decoders:
+                - name: uint
+            - name: ip_addr
+              size: 8
+              decoders:
+                - name: uint
+            - name: dst_port
+              size: 2
+              decoders:
+                - name: uint
+            - name: delt_us
+              size: 8
+              decoders:
+                - name: uint
+            - name: proc_name
+              size: 26
+              decoders:
+                - name: string
+                  # TODO Corriger ça pour que ça ne provoque plus de segfault
+                  #- name: latency_ipv6
+                  #  help: tcp6 connection latency
+                  #  table: pid_lat6
+                  #  labels:
+                  #    - name: time
+                  #      size: 8
+                  #      decoders:
+                  #        - name: uint
+                  #    - name: pid
+                  #      size: 4
+                  #      decoders:
+                  #        - name: uint
+                  #    - name: source_addr
+                  #      size: 16
+                  #      decoders:
+                  #        - name: uint
+                  #    - name: dst_addr
+                  #      size: 16
+                  #      decoders:
+                  #        - name: uint
+                  #    - name: ip_addr
+                  #      size: 8
+                  #      decoders:
+                  #        - name: uint
+                  #    - name: dst_port
+                  #      size: 2
+                  #      decoders:
+                  #        - name: uint
+                  #    - name: delt_us
+                  #      size: 8
+                  #      decoders:
+                  #        - name: uint
+                  #    - name: proc_name
+                  #      size: 26
+                  #      decoders:
+                  #        - name: string
     kprobes:
       tcp_v4_connect: trace_connect
       tcp_v6_connect: trace_connect
       tcp_rcv_state_process: trace_tcp_rcv_state_process
     code: |
+      //@begin=cpp@
         #include <uapi/linux/ptrace.h>
         #include <net/sock.h>
         #include <net/tcp_states.h>
@@ -27,9 +93,6 @@ programs:
             char task[TASK_COMM_LEN];
         };
         BPF_HASH(start, struct sock *, struct info_t);
-
-        // last latency by pid
-        BPF_HASH(pid_lat, u32, u64);
 
         // separate data structs for ipv4 and ipv6
         struct ipv4_data_t {
@@ -43,6 +106,10 @@ programs:
             char task[TASK_COMM_LEN];
         };
         BPF_PERF_OUTPUT(ipv4_events);
+
+        // last latency by pid
+        BPF_HASH(pid_lat4, struct ipv4_data_t, u64);
+
         struct ipv6_data_t {
             u64 ts_us;
             u32 pid;
@@ -54,6 +121,11 @@ programs:
             char task[TASK_COMM_LEN];
         };
         BPF_PERF_OUTPUT(ipv6_events);
+
+        // last latency by pid
+        BPF_HASH(pid_lat6, struct ipv6_data_t, u64);
+
+
         int trace_connect(struct pt_regs *ctx, struct sock *sk)
         {
             u32 pid = bpf_get_current_pid_tgid();
@@ -87,11 +159,11 @@ programs:
             // Record latency
             u64 latency_val = delta_us;
             u32 current_pid = infop->pid;
-            u64 *last_latency_val_p = pid_lat.lookup(&current_pid);
+            u64 *last_latency_val_p = pid_lat4.lookup(&current_pid);
             if (last_latency_val_p != 0) {
-              pid_lat.update(&current_pid, &latency_val);
+              pid_lat4.update(&current_pid, &latency_val);
             } else {
-              pid_lat.insert(&current_pid, &latency_val);
+              pid_lat4.insert(&current_pid, &latency_val);
             }
             */
 
@@ -118,11 +190,11 @@ programs:
                 // Record latency
                 u64 latency_val = delta_us;
                 u32 current_pid = infop->pid;
-                u64 *last_latency_val_p = pid_lat.lookup(&current_pid);
+                u64 *last_latency_val_p = pid_lat4.lookup(&data4);
                 if (last_latency_val_p != 0) {
-                  pid_lat.update(&current_pid, &latency_val);
+                  pid_lat4.update(&data4, &latency_val);
                 } else {
-                  pid_lat.insert(&current_pid, &latency_val);
+                  pid_lat4.insert(&data4, &latency_val);
                 }
 
             } else /* AF_INET6 */ {
@@ -140,14 +212,15 @@ programs:
                 // Record latency
                 u64 latency_val = delta_us;
                 u32 current_pid = infop->pid;
-                u64 *last_latency_val_p = pid_lat.lookup(&current_pid);
+                u64 *last_latency_val_p = pid_lat6.lookup(&data6);
                 if (last_latency_val_p != 0) {
-                  pid_lat.update(&current_pid, &latency_val);
+                  pid_lat6.update(&data6, &latency_val);
                 } else {
-                  pid_lat.insert(&current_pid, &latency_val);
+                  pid_lat6.insert(&data6, &latency_val);
                 }
 
             }
             start.delete(&skp);
             return 0;
         }
+        //@end=ccp@
