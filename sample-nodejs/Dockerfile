@@ -15,3 +15,10 @@ WORKDIR "/nodejs/node-v$NODE_VERSION"
 
 RUN ./configure --with-dtrace
 RUN make -j 32
+
+WORKDIR /code
+COPY . .
+
+CMD ["sh", "-c", "node ./app.js"]
+
+
