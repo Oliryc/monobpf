@@ -20,6 +20,7 @@ programs:
         #include <net/sock.h>
         #include <net/tcp_states.h>
         #include <bcc/proto.h>
+
         struct info_t {
             u64 ts;
             u32 pid;
@@ -27,7 +28,7 @@ programs:
         };
         BPF_HASH(start, struct sock *, struct info_t);
 
-        // average latency by pid
+        // last latency by pid
         BPF_HASH(pid_lat, u32, u64);
 
         // separate data structs for ipv4 and ipv6
@@ -79,6 +80,7 @@ programs:
             }
             u64 ts = infop->ts;
             u64 now = bpf_ktime_get_ns();
+
             u64 delta_us = (now - ts) / 1000ul;
 
             // Record latency
@@ -91,11 +93,11 @@ programs:
               pid_lat.insert(&current_pid, &latency_val);
             }
 
-            #ifdef MATENCY
+        #ifdef MIN_LATENCY
             if ( delta_us < DURATION_US ) {
                 return 0; // connect latency is below latency filter minimum
             }
-            #endif
+        #endif
             // pull in details
             u16 family = 0, dport = 0;
             family = skp->__sk_common.skc_family;
