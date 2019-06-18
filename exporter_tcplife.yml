@@ -1,11 +1,11 @@
 # Based on https://github.com/iovisor/bcc/blob/master/tools/tcplife.py
-# TODO Remove code used only in tcplife
+# TODO Remove code used only in tcplife, use seconds as unit
 programs:
   - name: tcp_life
     metrics:
       counters:
-        - name: latency
-          help: tcp4 connection latency
+        - name: tcp_latency
+          help: tcp connection latency
           table: pid_lat
           labels:
             - name: pid
