@@ -1,9 +1,10 @@
 # Based on https://github.com/iovisor/bcc/blob/master/tools/tcplife.py
+# TODO Remove code used only in tcplife
 programs:
   - name: tcp_life
     metrics:
       counters:
-        - name: latency_ipv4
+        - name: latency
           help: tcp4 connection latency
           table: pid_lat
           labels:
@@ -11,6 +12,14 @@ programs:
               size: 4
               decoders:
                 - name: uint
+            - name: ip46
+              size: 4
+              decoders:
+                - name: uint
+                - name: static_map
+                  static_map:
+                    4: "IPv4"
+                    6: "IPv6"
             - name: proc_name
               size: 16
               decoders:
@@ -62,7 +71,7 @@ programs:
       // Minimal structure for export
       struct export_min_t {
           u32 pid;
-          // TODO Ajouter IPv4/v6
+          u32 ip46; // Ajouter IPv4/v6, even if we are storing only two values, it takes the size of a u32 with padding
           char task[TASK_COMM_LEN];
       };
 
@@ -172,7 +181,7 @@ programs:
               ipv4_events.perf_submit(ctx, &data4, sizeof(data4));
 
               // Record latency
-              struct export_min_t export_data = {.pid = pid};
+              struct export_min_t export_data = {.pid = pid, .ip46 = 4};
               __builtin_memcpy(&export_data.task, data4.task, sizeof(export_data.task));
               u64 latency_val = delta_us;
               u64 *last_latency_val_p = pid_lat.lookup(&export_data);
@@ -201,6 +210,18 @@ programs:
                   bpf_probe_read(&data6.task, sizeof(data6.task), (void *)mep->task);
               }
               ipv6_events.perf_submit(ctx, &data6, sizeof(data6));
+
+              // Record latency
+              struct export_min_t export_data = {.pid = pid, .ip46 = 6};
+              __builtin_memcpy(&export_data.task, data6.task, sizeof(export_data.task));
+              u64 latency_val = delta_us;
+              u64 *last_latency_val_p = pid_lat.lookup(&export_data);
+              if (last_latency_val_p != 0) {
+                pid_lat.update(&export_data, &latency_val);
+              } else {
+                pid_lat.insert(&export_data, &latency_val);
+              }
+
           }
 
           if (mep != 0)
