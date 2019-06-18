@@ -24,6 +24,9 @@ programs:
               size: 16
               decoders:
                 - name: string
+                - name: regexp
+                  regexps:
+                    - ^httpd$ 
     kprobes:
       tcp_set_state: kprobe__tcp_set_state
     code: |
