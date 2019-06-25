@@ -1,0 +1,24 @@
+log advisory on default {
+  bcc.runq.latency
+  bcc.proc.profile
+  bcc.proc.ustat.gc
+  bcc.proc.ustat.except
+  bcc.proc.ustat.class
+  bcc.proc.ustat.object
+  bcc.proc.ustat.method
+  bcc.proc.ustat.thread
+  bcc.proc.io.net.tcptop.tx
+  bcc.proc.io.net.tcptop.rx
+  bcc.proc.io.net.tcptop.dport
+  bcc.proc.io.net.tcptop.daddr
+  bcc.proc.io.net.tcptop.lport
+  bcc.proc.io.net.tcptop.laddr
+  bcc.proc.io.net.tcptop.comm
+  bcc.proc.io.net.tcptop.pid
+  bcc.proc.io.net.total.rx
+  bcc.proc.io.net.total.tx
+  bcc.proc.sysfork
+  bcc.disk.all.latency
+}
+
+
