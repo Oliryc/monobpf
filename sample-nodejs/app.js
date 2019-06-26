@@ -10,6 +10,7 @@ const server = http.createServer((req, res) => {
 
   try {
     if (global.gc) {
+      console.log(new Date().toLocaleString());
       console.log("gc running…");
       global.gc();
       console.log("gc finished");

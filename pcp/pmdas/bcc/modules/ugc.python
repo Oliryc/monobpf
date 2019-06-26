@@ -22,6 +22,7 @@
 import ctypes as ct
 from ctypes import c_int
 from os import path
+from threading import Lock, Thread
 
 from bcc import BPF, USDT, utils
 
@@ -226,6 +227,10 @@ class PCPBCCModule(PCPBCCBase):
                                              page_cnt=self.buffer_page_count,
                                              lost_cb=self.perf_buffer_lost_cb)
 
+            # TODO Check for Thread safety & locking
+            self.thread = Thread(name="bpfpoller", target=self.perf_buffer_poller)
+            self.thread.setDaemon(True)
+            self.thread.start()
             self.log("Compiled.")
         except Exception as error: # pylint: disable=broad-except
             self.bpf = None
@@ -234,19 +239,25 @@ class PCPBCCModule(PCPBCCBase):
             self.err("Module NOT active!")
             raise
 
-    def handle_gc_event(cpu, data, size):
+    def handle_gc_event(self, cpu, data, size):
+        #  self.log("Handling gc event")
         event = ct.cast(data, ct.POINTER(GCEvent)).contents
         elapsed = event.elapsed_ns
-        description = probes[event.probe_index].format(event)
+        description = self.probes[event.probe_index].format(event)
         # TODO See if we want to filter here too
         #if args.filter and args.filter not in description:
             #return
         # TODO Exploiter les résultats
         self.cache = PCPMetrics(event=description, duration=elapsed, lang="TODO") 
         #print("%-8.3f %-8.2f %s" % (time.time() - start_ts, elapsed, description))
+        #  self.log(str(self.cache))
+        #  self.log("Handled gc event")
 
     def refresh(self):
         """ Refresh BPF data """
+        self.log("refresh: cache: "+str(self.cache))
+        self.log("refresh: insts: "+str(self.insts))
+
         if self.bpf is None:
             return None
 
@@ -262,11 +273,17 @@ class PCPBCCModule(PCPBCCBase):
         #    self.cache[key] = v.value
         #    self.insts[key] = c_int(1)
 
+        self.insts = {"test"+str(i) : ct.c_int(1) for i in range(10)}
+        self.log("refresh: insts: "+str(self.insts))
+
         return self.insts
 
     def bpfdata(self, item, inst):
         """ Return BPF data as PCP metric value """
         try:
+            #self.log("bpfdata: cache: "+str(self.cache))
+            #self.log("bpfdata: item: "+str(item))
+            #self.log("bpfdata: inst: "+str(inst))
             # TODO Understand pmdaIndom
             #key = self.pmdaIndom.inst_name_lookup(inst)
             if item == 0:
@@ -295,6 +312,10 @@ class Probe(object):
     def generate(self):
         text = """
 int trace_%s(struct pt_regs *ctx) {
+
+// TODO Remove this
+bpf_trace_printk("Trace 1\\n");
+
     u64 pid = bpf_get_current_pid_tgid();
     struct entry_t e = {};
     e.start_ns = bpf_ktime_get_ns();
@@ -303,6 +324,10 @@ int trace_%s(struct pt_regs *ctx) {
     return 0;
 }
 int trace_%s(struct pt_regs *ctx) {
+
+// TODO Remove this
+bpf_trace_printk("Trace 2\\n");
+
     u64 elapsed;
     struct entry_t *e;
     struct gc_event_t event = {};
@@ -318,6 +343,9 @@ int trace_%s(struct pt_regs *ctx) {
     event.elapsed_ns = elapsed;
     %s
     gcs.perf_submit(ctx, &event, sizeof(event));
+
+bpf_trace_printk("Trace 2bis\\n");
+
     return 0;
 }
         """ % (self.begin, self.begin_save, self.end,
@@ -325,8 +353,8 @@ int trace_%s(struct pt_regs *ctx) {
         return text
 
     def attach(self, usdt):
-        usdt.enable_probe_or_bail(self.begin, "trace_%s" % self.begin)
-        usdt.enable_probe_or_bail(self.end, "trace_%s" % self.end)
+        usdt.enable_probe(self.begin, "trace_%s" % self.begin)
+        usdt.enable_probe(self.end, "trace_%s" % self.end)
 
     def format(self, data):
         return self.formatter(data)
