@@ -9,7 +9,11 @@ const server = http.createServer((req, res) => {
   res.end('Hello World\n');
 
   try {
-    if (global.gc) {global.gc();}
+    if (global.gc) {
+      console.log("gc running…");
+      global.gc();
+      console.log("gc finished");
+    }
   } catch (e) {
     console.log("`node --expose-gc index.js`");
     process.exit();

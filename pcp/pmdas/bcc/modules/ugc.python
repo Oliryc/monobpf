@@ -1,0 +1,355 @@
+#
+# Copyright (C) 2019 SnT
+# Based on the ucalls PCP PMDA by Marko Myllynen:
+# https://github.com/performancecopilot/pcp/blob/master/src/pmdas/bcc/modules/ucalls.python
+# Based on the ugc BCC tool by Sasha Goldshtein:
+# https://github.com/iovisor/bcc/blob/master/tools/lib/ugc.py
+#
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 2 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+""" PCP BCC PMDA ugc module """
+
+# pylint: disable=invalid-name, too-many-instance-attributes
+
+import ctypes as ct
+from ctypes import c_int
+from os import path
+
+from bcc import BPF, USDT, utils
+
+from pcp.pmapi import pmUnits
+from cpmapi import PM_TYPE_U64, PM_SEM_COUNTER, PM_SEM_INSTANT, PM_COUNT_ONE, PM_TIME_USEC, PM_TYPE_STRING
+from cpmapi import PM_ERR_PMID
+from cpmda import PMDA_FETCH_NOVALUES
+
+from modules.pcpbcc import PCPBCCBase
+
+from collections import namedtuple
+
+#
+# BPF program
+#
+bpf_src = "modules/ugc.bpf"
+
+#
+# PCP BCC PMDA constants
+#
+MODULE = 'ugc'
+BASENS = 'proc.ugc.'
+units_count = pmUnits(0, 0, 1, 0, 0, PM_COUNT_ONE)
+units_nsecs = pmUnits(0, 1, 0, 0, PM_TIME_USEC, 0)
+units_none = pmUnits(0, 0, 0, 0, 0, 0)
+
+#
+# PCP BCC Module
+#
+class PCPBCCModule(PCPBCCBase):
+    """ PCP BCC ugc module """
+    def __init__(self, config, log, err, proc_refresh):
+        """ Constructor """
+        PCPBCCBase.__init__(self, MODULE, config, log, err)
+
+        # XXX DBG
+        self.debug = True
+
+        self.pid = None
+        self.proc_filter = None
+        self.proc_refresh = proc_refresh
+
+        self.cache = None
+        self.lang = None
+        self.usdt_contexts = []
+        self.buffer_page_count = 64
+
+        self.probes = []
+
+        self.lang_specific = {
+            "java"   : GCSpecificBCC(
+                begin_save = """
+                bpf_usdt_readarg(6, ctx, &e.field1);    // used bytes
+                bpf_usdt_readarg(8, ctx, &e.field2);    // max bytes
+                """,
+                end_save = """
+                event.field1 = e->field1;                  // used bytes at start
+                event.field2 = e->field2;                  // max bytes at start
+                bpf_usdt_readarg(6, ctx, &event.field3);   // used bytes at end
+                bpf_usdt_readarg(8, ctx, &event.field4);   // max bytes at end
+                u64 manager = 0, pool = 0;
+                bpf_usdt_readarg(1, ctx, &manager);        // ptr to manager name
+                bpf_usdt_readarg(3, ctx, &pool);           // ptr to pool name
+                bpf_probe_read(&event.string1, sizeof(event.string1), (void *)manager);
+                bpf_probe_read(&event.string2, sizeof(event.string2), (void *)pool);
+                """,
+            ),
+            "node"   : GCSpecificBCC(
+                begin_save = "",
+                end_save = """
+                u32 gc_type = 0;
+                bpf_usdt_readarg(1, ctx, &gc_type);
+                event.field1 = gc_type;
+                """,
+            ),
+            # TODO
+            #"perl"   : ["bpf_usdt_readarg(2, ctx, &clazz);", "bpf_usdt_readarg(1, ctx, &method);"],
+            #"php"    : ["bpf_usdt_readarg(4, ctx, &clazz);", "bpf_usdt_readarg(1, ctx, &method);"],
+            #"python" : ["bpf_usdt_readarg(1, ctx, &clazz);", "bpf_usdt_readarg(2, ctx, &method);"],
+            #"ruby"   : ["bpf_usdt_readarg(1, ctx, &clazz);", "bpf_usdt_readarg(2, ctx, &method);"],
+            #"tcl"    : ["", "bpf_usdt_readarg(1, ctx, &method);"],
+        }
+
+        for opt in self.config.options(MODULE):
+            if opt == 'language':
+                self.lang = self.config.get(MODULE, opt)
+            if opt == 'buffer_page_count':
+                self.buffer_page_count = int(self.config.get(MODULE, opt))
+                if not self.buffer_page_count or \
+                   self.buffer_page_count & (self.buffer_page_count - 1):
+                    raise RuntimeError("Buffer page count is not power of two.")
+            if opt == 'process':
+                self.proc_filter = self.config.get(MODULE, opt)
+                self.update_pids(self.get_proc_info(self.proc_filter))
+
+        # TODO Know if this affects us or not
+        #if not self.proc_filter:
+        #    # https://github.com/iovisor/bcc/issues/1774
+        #    raise RuntimeError("Process filter is mandatory.")
+
+        if not self.lang:
+            if not self.pid:
+                raise RuntimeError("Language must be set when no process found on startup!")
+            self.lang = utils.detect_language(self.lang_specific.keys(), self.pid)
+            self.log("Language not set, detected: %s." % str(self.lang))
+        if self.lang not in self.lang_specific.keys():
+            raise RuntimeError("Language must be one of: %s but is %s." % (str(self.lang_specific.keys()), self.lang))
+
+        self.log("Initialized.")
+
+    def metrics(self):
+        """ Get metric definitions """
+        name = BASENS
+        self.items = (
+            # Name - reserved - type - semantics - units - help
+            (name + 'event', None, PM_TYPE_STRING, PM_SEM_INSTANT, units_none, 'gc event description'),
+            (name + 'duration', None, PM_TYPE_U64, PM_SEM_INSTANT, units_nsecs, 'duration of the'
+                                                                                'gc call'),
+            (name + 'language', None, PM_TYPE_STRING, PM_SEM_INSTANT, units_none, 'runtime language'),
+        )
+        return True, self.items
+
+    def reset_cache(self):
+        """ Reset internal cache """
+        self.cache = {}
+
+    def undef_cache(self):
+        """ Undefine internal cache """
+        self.cache = None
+
+    def perf_buffer_lost_cb(self, lost_cnt):
+        """ Callback for lost perf buffer events """
+        self.err("Lost %d events; buffer_page_count should be increased." % lost_cnt)
+
+    def compile(self):
+        """ Compile BPF """
+        try:
+            if not self.pid and self.proc_filter and not self.proc_refresh:
+                # https://github.com/iovisor/bcc/issues/1774
+                raise RuntimeError("No process to attach found.")
+
+            if not self.bpf_text:
+                with open(path.dirname(__file__) + '/../' + bpf_src) as src:
+                    self.bpf_text = src.read()
+
+            if not self.pid and self.proc_filter and self.proc_refresh:
+                self.log("No process to attach found, activation postponed.")
+                return
+
+            # Set the language specific probes
+            if self.lang in ("java"):
+                def formatter(e):
+                    "%s %s used=%d->%d max=%d->%d" % \
+                        (e.string1, e.string2, e.field1, e.field3, e.field2, e.field4)
+                self.probes.append(
+                    Probe("mem__pool__gc__begin", "mem__pool__gc__end",
+                          self.lang_specific['java'].begin_save, self.lang_specific['java'].end_save, formatter))
+                self.probes.append(
+                    Probe("gc__begin", "gc__end",
+                          "", "", lambda _: "no additional info available"))
+            elif self.lang in ("node"):
+                descs = {"GC scavenge": 1, "GC mark-sweep-compact": 2,
+                         "GC incremental mark": 4, "GC weak callbacks": 8}
+                self.probes.append(
+                    Probe("gc__start", "gc__done", 
+                          self.lang_specific['node'].begin_save, self.lang_specific['node'].end_save,
+                          lambda e: str.join(", ",
+                                             [desc for desc, val in descs.items()
+                                              if e.field1 & val != 0])))
+
+            #elif self.lang in ("perl",):
+            #    entry_probe = "sub__entry"
+            #    return_probe = "sub__return"
+            #elif self.lang in ("tcl",):
+            #    entry_probe = "proc__entry"
+            #    return_probe = "proc__return"
+            #else:
+            #    entry_probe = "function__entry"
+            #    return_probe = "function__return"
+            #extra_entry, extra_return = None, None
+            #if self.lang == "ruby":
+            #    extra_entry = "cmethod__entry"
+            #    extra_return = "cmethod__return"
+
+            usdt = USDT(pid=self.pid)
+
+            self.usdt_contexts.append(usdt)
+
+            for probe in self.probes:
+                self.bpf_text = self.bpf_text + probe.generate()
+                probe.attach(usdt)
+
+            # TODO Apply this
+            #bpf_text = self.apply_pid_filter(self.bpf_text, [self.pid])
+
+            if self.debug:
+                self.log("BPF to be compiled:\n" + self.bpf_text.strip())
+
+            self.reset_cache()
+            self.bpf = BPF(text=self.bpf_text, usdt_contexts=self.usdt_contexts)
+            self.bpf['gcs'].open_perf_buffer(self.handle_gc_event,
+                                             page_cnt=self.buffer_page_count,
+                                             lost_cb=self.perf_buffer_lost_cb)
+
+            self.log("Compiled.")
+        except Exception as error: # pylint: disable=broad-except
+            self.bpf = None
+            self.undef_cache()
+            self.err(str(error))
+            self.err("Module NOT active!")
+            raise
+
+    def handle_gc_event(cpu, data, size):
+        event = ct.cast(data, ct.POINTER(GCEvent)).contents
+        elapsed = event.elapsed_ns
+        description = probes[event.probe_index].format(event)
+        # TODO See if we want to filter here too
+        #if args.filter and args.filter not in description:
+            #return
+        # TODO Exploiter les résultats
+        self.cache = PCPMetrics(event=description, duration=elapsed, lang="TODO") 
+        #print("%-8.3f %-8.2f %s" % (time.time() - start_ts, elapsed, description))
+
+    def refresh(self):
+        """ Refresh BPF data """
+        if self.bpf is None:
+            return None
+
+        # TODO Understand what the purpose of refresh is and if
+        # anything is required
+        #def get_key(s):
+        #    """ Helper to read key for dict """
+        #    return self.parse_inst_name(s.clazz.decode("ASCII", "replace") + "." + \
+        #                                s.method.decode("ASCII", "replace"))
+
+        #for k, v in self.bpf["counts"].items():
+        #    key = get_key(k)
+        #    self.cache[key] = v.value
+        #    self.insts[key] = c_int(1)
+
+        return self.insts
+
+    def bpfdata(self, item, inst):
+        """ Return BPF data as PCP metric value """
+        try:
+            # TODO Understand pmdaIndom
+            #key = self.pmdaIndom.inst_name_lookup(inst)
+            if item == 0:
+                return [self.cache.event, 1]
+            elif item == 1:
+                return [self.cache.duration, 1]
+            elif item == 2:
+                return [self.cache.lang, 1]
+            else:
+                return [PM_ERR_PMID, 0]
+        except Exception: # pylint: disable=broad-except
+            return [PMDA_FETCH_NOVALUES, 0]
+
+
+class Probe(object):
+    def __init__(self, begin, end, begin_save, end_save, formatter):
+        self.begin = begin
+        self.end = end
+        self.begin_save = begin_save
+        self.end_save = end_save
+        self.formatter = formatter
+
+        # TODO Remove this if not bound to a parameter in config file
+        self.minimum = 0
+
+    def generate(self):
+        text = """
+int trace_%s(struct pt_regs *ctx) {
+    u64 pid = bpf_get_current_pid_tgid();
+    struct entry_t e = {};
+    e.start_ns = bpf_ktime_get_ns();
+    %s
+    entry.update(&pid, &e);
+    return 0;
+}
+int trace_%s(struct pt_regs *ctx) {
+    u64 elapsed;
+    struct entry_t *e;
+    struct gc_event_t event = {};
+    u64 pid = bpf_get_current_pid_tgid();
+    e = entry.lookup(&pid);
+    if (!e) {
+        return 0;   // missed the entry event on this thread
+    }
+    elapsed = bpf_ktime_get_ns() - e->start_ns;
+    if (elapsed < %d) {
+        return 0;
+    }
+    event.elapsed_ns = elapsed;
+    %s
+    gcs.perf_submit(ctx, &event, sizeof(event));
+    return 0;
+}
+        """ % (self.begin, self.begin_save, self.end,
+               self.minimum * 1000000, self.end_save)
+        return text
+
+    def attach(self, usdt):
+        usdt.enable_probe_or_bail(self.begin, "trace_%s" % self.begin)
+        usdt.enable_probe_or_bail(self.end, "trace_%s" % self.end)
+
+    def format(self, data):
+        return self.formatter(data)
+
+
+# Language specific BCC code for GC
+GCSpecificBCC = namedtuple('GCSpecificBCC', ['begin_save', 'end_save'])
+
+# Hold metrics to be given to PCP
+PCPMetrics = namedtuple('PCPMetrics',
+                        ['event', 'duration', 'lang'])
+
+# Mapped to gc_event_t in bcc code
+class GCEvent(ct.Structure):
+    _fields_ = [
+        ("probe_index", ct.c_ulonglong),
+        ("elapsed_ns", ct.c_ulonglong),
+        ("field1", ct.c_ulonglong),
+        ("field2", ct.c_ulonglong),
+        ("field3", ct.c_ulonglong),
+        ("field4", ct.c_ulonglong),
+        ("string1", ct.c_char * 32),
+        ("string2", ct.c_char * 32)
+        ]
+
+
