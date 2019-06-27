@@ -8,14 +8,40 @@
 #include <linux/ip.h>
 #include <linux/ipv6.h>
 
+/*
+ * We want to extract information from an HTTP Payload in a packet.
+ * So we need to figure out where this HTTP payload starts (taking into account variable length header for IP and TCP) and to then to parse it from there
+ */
+
+/* TODO
+ * [ ] Extract length for IPv4
+ * [ ] Extract length for IPv6
+ * [ ] Limit ourselves to ports 80 & 443 to decide faster when we want to stop analysing a packet
+ * [ ] See HTTPS case -> decrypt payload with private key given to the user space programm by user?
+ * [ ] HTTP2 support?
+ * [ ] Remove trace_printk
+ */
+
 BPF_TABLE("array", int, long, dropcnt, 256);
 
-static inline int parse_ipv4(void *data, u64 nh_off, void *data_end) {
+// Return length (in bit) of the IPv4 header in the paquet between data and data_end.
+// Uses nh_off as the offset to the beginning of the IP header
+static inline int length_ipv4_header(void *data, u64 nh_off, void *data_end) {
     struct iphdr *iph = data + nh_off;
+
+    bpf_trace_printk("data: 0x%p\n", data);
+    bpf_trace_printk("data_end: 0x%p\n", data_end);
+    bpf_trace_printk("data_end-data: 0x%p\n", data_end-data);
+    bpf_trace_printk("nh_off: 0x%p\n", nh_off);
 
     if ((void*)&iph[1] > data_end)
         return 0;
-    return iph->protocol;
+    bpf_trace_printk("iph->version: %u\n", iph->version);
+    bpf_trace_printk("iph->ihl: %u\n", iph->ihl);
+
+    // The IHL field is in 32-bit word
+    int header_length = (int) (iph->ihl*32);
+    return header_length;
 }
 
 static inline int parse_ipv6(void *data, u64 nh_off, void *data_end) {
@@ -38,8 +64,8 @@ int xdp_prog1(struct CTXTYPE *ctx) {
     long *value;
     uint16_t h_proto;
     uint64_t nh_off = 0;
-    int index;
 
+    // Network offset, two MAC address?
     nh_off = sizeof(*eth);
 
     if (data + nh_off  > data_end)
@@ -68,15 +94,29 @@ int xdp_prog1(struct CTXTYPE *ctx) {
             h_proto = vhdr->h_vlan_encapsulated_proto;
     }
 
-    if (h_proto == htons(ETH_P_IP))
-        index = parse_ipv4(data, nh_off, data_end);
-    else if (h_proto == htons(ETH_P_IPV6))
-       index = parse_ipv6(data, nh_off, data_end);
-    else
-        index = 0;
+    // Offset due to IP Header
+    int ip_offset = 0;
 
+    if (h_proto == htons(ETH_P_IP))
+        // TODO If length_ipv4_header gives 0, then what?
+        ip_offset = length_ipv4_header(data, nh_off, data_end);
+    else if (h_proto == htons(ETH_P_IPV6))
+        //TODO
+        //ip_offset = length_ipv6_header(data, nh_off, data_end);
+        ip_offset = 0;
+
+    bpf_trace_printk("ip_offset: %lu\n", ip_offset);
+
+    // Get TCP header length
+    // TODO
+
+    // Parse HTTP payload
+    // TODO
+
+    /*
     value = dropcnt.lookup(&index);
     if (value) lock_xadd(value, 1);
+    */
 
     return rc;
 }
