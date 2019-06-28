@@ -27,18 +27,14 @@ static inline int match_p0f(void *data, void *data_end) {
   if (tcp_hdr + 1 > (struct tcphdr *)data_end)
     return XDP_ABORTED;
 
-  bpf_trace_printk("tcp_hdr->source==: %u\n", tcp_hdr->source);
-  bpf_trace_printk("tcp_hdr->source: %u\n", tcp_hdr->source);
+  bpf_trace_printk("tcp_hdr->source: %u\n", htons(tcp_hdr->source));
+  bpf_trace_printk("tcp_hdr->dest: %u\n", htons(tcp_hdr->dest));
 
   bpf_trace_printk("tcp_hdr->doff: %u\n", tcp_hdr->doff);
 
   tcp_opts = (u8 *)(tcp_hdr + 1);
-  /*
-  if (tcp_opts + (tcp_hdr->doff - 5) * 4 > (u8 *)data_end)
-    return XDP_ABORTED;
-  */
 
-  return XDP_DROP;
+  return XDP_PASS;
 }
 
 int xdp_prog1(struct CTXTYPE *ctx) {
