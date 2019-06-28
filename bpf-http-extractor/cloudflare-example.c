@@ -22,17 +22,15 @@ static inline int match_p0f(void *data, void *data_end) {
   ip_hdr = (struct iphdr *)(eth_hdr + 1);
   if (ip_hdr + 1 > (struct iphdr *)data_end)
     return XDP_ABORTED;
-  // if (!((ip_hdr->frag_off & IP_MBZ) == 0))
+
   tcp_hdr = (struct tcphdr*)((u8 *)ip_hdr + ip_hdr->ihl * 4);
-
-  u16 s1 = tcp_hdr->source;
-  u16 s2 = tcp_hdr->source;
-  bpf_trace_printk("tcp_hdr->source==: %p\n", &tcp_hdr->source);
-  bpf_trace_printk("tcp_hdr->source: %p\n", &tcp_hdr->source);
-
   if (tcp_hdr + 1 > (struct tcphdr *)data_end)
     return XDP_ABORTED;
 
+  bpf_trace_printk("tcp_hdr->source==: %u\n", tcp_hdr->source);
+  bpf_trace_printk("tcp_hdr->source: %u\n", tcp_hdr->source);
+
+  bpf_trace_printk("tcp_hdr->doff: %u\n", tcp_hdr->doff);
 
   tcp_opts = (u8 *)(tcp_hdr + 1);
   /*
