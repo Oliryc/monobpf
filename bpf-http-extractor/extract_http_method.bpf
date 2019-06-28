@@ -7,7 +7,6 @@
 #include <linux/if_vlan.h>
 #include <linux/ip.h>
 #include <linux/ipv6.h>
-#include <net/sock.h>
 
 /*
  * We want to extract information from an HTTP Payload in a packet.
