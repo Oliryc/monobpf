@@ -14,8 +14,10 @@ static inline int match_p0f(void *data, void *data_end) {
   struct tcphdr *tcp_hdr;
   u8 *tcp_opts;
   eth_hdr = (struct ethhdr *)data;
+  /*
   if (eth_hdr + 1 > (struct ethhdr *)data_end)        
     return XDP_ABORTED;
+  */
 
   ip_hdr = (struct iphdr *)(eth_hdr + 1);
   if (ip_hdr + 1 > (struct iphdr *)data_end)
@@ -31,9 +33,12 @@ static inline int match_p0f(void *data, void *data_end) {
   if (tcp_hdr + 1 > (struct tcphdr *)data_end)
     return XDP_ABORTED;
 
+
   tcp_opts = (u8 *)(tcp_hdr + 1);
+  /*
   if (tcp_opts + (tcp_hdr->doff - 5) * 4 > (u8 *)data_end)
     return XDP_ABORTED;
+  */
 
   return XDP_DROP;
 }
