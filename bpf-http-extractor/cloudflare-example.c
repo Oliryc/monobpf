@@ -7,6 +7,7 @@
 #include <linux/tcp.h>
 
 #define LISTEN_PORT 80
+#define BYTE_EXPLORE 32
 
 BPF_TABLE("array", int, long, dropcnt, 256);
 
@@ -41,10 +42,16 @@ static inline int match_p0f(void *data, void *data_end) {
 
   if (sport == LISTEN_PORT || dport == LISTEN_PORT) {
     char *http_hdr = (char *)((u8 *)tcp_hdr + tcp_hdr->doff * 4);
-    bpf_trace_printk("==============================, %u\n", sizeof(*http_hdr));
-    if (http_hdr + 2 > (char *)data_end) {
-      bpf_trace_printk("=== Abort 4\n");
+    bpf_trace_printk("==============================\n");
+    if (http_hdr + BYTE_EXPLORE > (char *)data_end) {
+      bpf_trace_printk("=== Too short\n");
       return XDP_ABORTED;
+    }
+
+#pragma clang loop unroll(full)
+    for (int i=0; i<BYTE_EXPLORE; i++) {
+      if (http_hdr[i]=='E' || http_hdr[i]=='T' || http_hdr[i] == 'P' || http_hdr[i] == ' ')
+        bpf_trace_printk("=-==-==-==-==-==-==-= %d: %u\n", i, http_hdr[i]);
     }
 
     bpf_trace_printk("tcp_hdr[1]: %u\n", http_hdr[1]);
