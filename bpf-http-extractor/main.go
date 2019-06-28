@@ -76,7 +76,7 @@ func main() {
 		}
 	}()
 
-	fmt.Println("Dropping packets, hit CTRL+C to stop")
+	fmt.Println("May be dropping packets, hit CTRL+C to stop. Se output of `sudo cat /sys/kernel/debug/tracing/trace_pipe`")
 
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, os.Interrupt, os.Kill)
