@@ -52,6 +52,36 @@ static inline int parse_ipv6(void *data, u64 nh_off, void *data_end) {
     return ip6h->nexthdr;
 }
 
+// Return length (in bit) of the TCP header in the paquet between data and data_end.
+// Uses ip_off as the offset to the beginning of the TCP header
+static inline int length_tcp_header(void *data, u64 ip_off, void *data_end) {
+    struct tcphdr *tcph = data + ip_off;
+    if ((void*)&tcph[1] > data_end) // || (void*)&tcph[0] < data)
+        return 0;
+
+    // bpf_trace_printk("tcph->doff: %c\n", tcph->doff);
+    if (tcph+1> (struct tcphdr*)data_end)
+      return 0;
+    bpf_trace_printk("tcph->source: %p\n", &tcph->source);
+    if (tcph+1> (struct tcphdr*)data_end)
+      return 0;
+    bpf_trace_printk("tcph->dest: %p\n", &tcph->dest);
+
+    // bpf_trace_printk("tcph->dest: %u\n", ntohs(tcph->dest));
+
+    // bpf_trace_printk("tcph->dest: %u\n", tcph->dest);
+    /*
+    bpf_trace_printk("tcph: 0x%p\n", tcph);
+    bpf_trace_printk("tcph: 0x%p\n", tcph);
+    */
+
+    // The IHL field is in 32-bit word
+    // int header_length = (int) (iph->ihl*32);
+    // return header_length;
+    return 0;
+}
+
+
 int xdp_prog1(struct CTXTYPE *ctx) {
 
     void* data_end = (void*)(long)ctx->data_end;
@@ -95,20 +125,23 @@ int xdp_prog1(struct CTXTYPE *ctx) {
     }
 
     // Offset due to IP Header
-    int ip_offset = 0;
+    int ip_offset = nh_off;
 
     if (h_proto == htons(ETH_P_IP))
         // TODO If length_ipv4_header gives 0, then what?
-        ip_offset = length_ipv4_header(data, nh_off, data_end);
+        ip_offset += length_ipv4_header(data, nh_off, data_end);
     else if (h_proto == htons(ETH_P_IPV6))
         //TODO
         //ip_offset = length_ipv6_header(data, nh_off, data_end);
-        ip_offset = 0;
+        ip_offset += 0;
 
     bpf_trace_printk("ip_offset: %lu\n", ip_offset);
 
     // Get TCP header length
-    // TODO
+    // Offset due to IP Header
+    int tcp_offset = ip_offset;
+    tcp_offset += length_tcp_header(data, ip_offset, data_end);
+    bpf_trace_printk("tcp_offset: %lu\n", tcp_offset);
 
     // Parse HTTP payload
     // TODO
