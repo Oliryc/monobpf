@@ -44,7 +44,7 @@ func main() {
 
 	ret := "XDP_DROP"
 	ctxtype := "xdp_md"
-	bpfSourceFile := "cloudflare-example.c"
+	bpfSourceFile := "cloudflare-example.bpf"
 
 	source, err := ioutil.ReadFile(bpfSourceFile)
 	if err != nil {
