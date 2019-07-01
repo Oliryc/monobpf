@@ -46,6 +46,9 @@ static inline int match_p0f(void *data, void *data_end) {
   u16 dport = bpf_ntohs(tcp_hdr->dest);
   bpf_trace_printk("tcp_hdr->source: %u\n", sport);
   bpf_trace_printk("tcp_hdr->dest: %u\n", dport);
+  bpf_trace_printk("tcp_hdr->seq: %u\n", bpf_ntohl(tcp_hdr->seq));
+  bpf_trace_printk("tcp_hdr->ack_seq: %u\n", bpf_ntohl(tcp_hdr->ack_seq));
+  bpf_trace_printk("tcp_hdr->check: %u\n", tcp_hdr->check);
   // u16 sport = tcp_hdr->source;
   // u16 dport = tcp_hdr->dest;
   // bpf_trace_printk("****ntohs tcp_hdr->doff: %u\n", bpf_ntohs(tcp_hdr->doff));
@@ -62,7 +65,7 @@ static inline int match_p0f(void *data, void *data_end) {
     bpf_trace_printk("http_hdr1: %p\n", http_hdr);
     bpf_trace_printk("http_hdr2: %p\n", http_hdr2);
     bpf_trace_printk("data_end : %p\n", data_end);
-    bpf_trace_printk("data-data_end : %u\n", data-data_end);
+    bpf_trace_printk("data_end-data : %u\n", (data_end-data));
     bpf_trace_printk("header_size(byte) : %u\n", sizeof(struct tcphdr)+sizeof(struct iphdr)+sizeof(struct ethhdr));
     bpf_trace_printk("==============================\n");
 
