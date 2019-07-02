@@ -23,7 +23,21 @@ static inline int match_p0f(void *data, void *data_end) {
      if (eth_hdr + 1 > (struct ethhdr *)data_end)        
      return XDP_PASS;
      */
-
+  struct ethhdr *eth_hdr2 = eth_hdr+1;
+  bpf_trace_printk("data_end-data : %u\n", (data_end-data));
+  if (eth_hdr2 > data_end){
+     bpf_trace_printk("Comp is broken\n");
+  }
+  bpf_trace_printk("eth_hdrx: %p\n", (void *)eth_hdr);
+  bpf_trace_printk("eth_hdrp1: %p\n", eth_hdr+1);
+  bpf_trace_printk("eth_hdrp: %p\n", eth_hdr2);
+  bpf_trace_printk("diff: %u\n", eth_hdr2-eth_hdr);
+  bpf_trace_printk("diff_bytes: %u\n", (u8 *)eth_hdr2-(u8 *)eth_hdr);
+  bpf_trace_printk("eth_hdrxcast: %p\n", (void *)(struct iphdr *)eth_hdr);
+  bpf_trace_printk("iphdr_size: %u\n", sizeof(struct iphdr));
+  bpf_trace_printk("eth_hdrxcastxadd: %p\n", (void *)(struct iphdr *)eth_hdr+1);
+  bpf_trace_printk("ethhdr_size: %u\n", sizeof(struct ethhdr));
+  bpf_trace_printk("eth_hdrxcastxadd: %p\n", (void *)(struct iphdr *)(eth_hdr+1));
   ip_hdr = (struct iphdr *)(eth_hdr + 1);
   if (ip_hdr + 1 > (struct iphdr *)data_end) {
     bpf_trace_printk("=== Abort 2\n");
@@ -61,9 +75,12 @@ static inline int match_p0f(void *data, void *data_end) {
     bpf_trace_printk("data: %p\n", data);
     bpf_trace_printk("eth_hdr: %p\n", eth_hdr);
     bpf_trace_printk("ip_hdr: %p\n", ip_hdr);
+    bpf_trace_printk("ip_hdr->tot_len: %u\n", ip_hdr->tot_len);
     bpf_trace_printk("tcp_hdr: %p\n", tcp_hdr);
     bpf_trace_printk("http_hdr1: %p\n", http_hdr);
     bpf_trace_printk("http_hdr2: %p\n", http_hdr2);
+    bpf_trace_printk("http_hdr-tcp_hdr: %u\n", http_hdr-(char *)tcp_hdr);
+    bpf_trace_printk("http_hdr2-tcp_hdr: %u\n", http_hdr2-(char *)((u32 *)tcp_hdr));
     bpf_trace_printk("data_end : %p\n", data_end);
     bpf_trace_printk("data_end-data : %u\n", (data_end-data));
     bpf_trace_printk("header_size(byte) : %u\n", sizeof(struct tcphdr)+sizeof(struct iphdr)+sizeof(struct ethhdr));
@@ -106,12 +123,13 @@ static inline int match_p0f(void *data, void *data_end) {
   return XDP_PASS;
 }
 
-int xdp_prog1(struct CTXTYPE *ctx) {
+int xdp_prog1(struct xdp_md *ctx) {
     bpf_trace_printk("Hi\n");
     void* data_end = (void*)(long)ctx->data_end;
     void* data = (void*)(long)ctx->data;
-
-    int rc = match_p0f(data, data_end);
+    bpf_trace_printk("Test %u\n", data_end - data);
+    int rc = XDP_PASS;
+    //int rc = match_p0f(data, data_end);
     bpf_trace_printk("Bye\n");
     return rc;
 }
