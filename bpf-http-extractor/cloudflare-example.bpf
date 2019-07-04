@@ -1,0 +1,133 @@
+// Based on https://www.netdevconf.org/2.1/slides/apr6/bertin_Netdev-XDP.pdf
+// vim:ft=c:
+#define KBUILD_MODNAME "foo"
+#include <linux/bpf.h>
+#include <linux/in.h>
+#include <linux/inet.h>
+#include <linux/ip.h>
+#include <net/ip.h>
+#include <linux/tcp.h>
+
+#define LISTEN_PORT 8080
+#define BYTE_EXPLORE 2
+
+BPF_TABLE("array", int, long, dropcnt, 256);
+
+static inline int match_p0f(void *data, void *data_end) {
+  struct ethhdr *eth_hdr;
+  struct iphdr  *ip_hdr;
+  struct tcphdr *tcp_hdr;
+  u8 *tcp_opts;
+  eth_hdr = (struct ethhdr *)data;
+  /*
+     if (eth_hdr + 1 > (struct ethhdr *)data_end)        
+     return XDP_PASS;
+     */
+  struct ethhdr *eth_hdr2 = eth_hdr+1;
+  bpf_trace_printk("data_end-data : %u\n", (data_end-data));
+  if (eth_hdr2 > data_end){
+     bpf_trace_printk("Comp is broken\n");
+  }
+  bpf_trace_printk("eth_hdrx: %p\n", (void *)eth_hdr);
+  bpf_trace_printk("eth_hdrp1: %p\n", eth_hdr+1);
+  bpf_trace_printk("eth_hdrp: %p\n", eth_hdr2);
+  bpf_trace_printk("diff: %u\n", eth_hdr2-eth_hdr);
+  bpf_trace_printk("diff_bytes: %u\n", (u8 *)eth_hdr2-(u8 *)eth_hdr);
+  bpf_trace_printk("eth_hdrxcast: %p\n", (void *)(struct iphdr *)eth_hdr);
+  bpf_trace_printk("iphdr_size: %u\n", sizeof(struct iphdr));
+  bpf_trace_printk("eth_hdrxcastxadd: %p\n", (void *)(struct iphdr *)eth_hdr+1);
+  bpf_trace_printk("ethhdr_size: %u\n", sizeof(struct ethhdr));
+  bpf_trace_printk("eth_hdrxcastxadd: %p\n", (void *)(struct iphdr *)(eth_hdr+1));
+  ip_hdr = (struct iphdr *)(eth_hdr + 1);
+  if (ip_hdr + 1 > (struct iphdr *)data_end) {
+    bpf_trace_printk("=== Abort 2\n");
+    return XDP_PASS;
+  }
+  bpf_trace_printk("ip_hdr->tot_len1: %u\n", bpf_ntohs(ip_hdr->tot_len));
+
+  // Print IP address (Note 127.0.0.1 <-> 2130706433)
+  u32 sip = bpf_ntohl(ip_hdr->saddr);
+  bpf_trace_printk("ip_hdr->saddr: %lu\n", sip);
+  u32 dip = bpf_ntohl(ip_hdr->daddr);
+  bpf_trace_printk("ip_hdr->daddr: %lu\n", dip);
+
+  tcp_hdr = (struct tcphdr*)((u8 *)ip_hdr + ip_hdr->ihl * 4);
+  if (tcp_hdr + 1 > (struct tcphdr *)data_end) {
+    bpf_trace_printk("=== Abort 3\n");
+    return XDP_PASS;
+  }
+
+  u16 sport = bpf_ntohs(tcp_hdr->source);
+  u16 dport = bpf_ntohs(tcp_hdr->dest);
+  bpf_trace_printk("tcp_hdr->source: %u\n", sport);
+  bpf_trace_printk("tcp_hdr->dest: %u\n", dport);
+  bpf_trace_printk("tcp_hdr->seq: %u\n", bpf_ntohl(tcp_hdr->seq));
+  bpf_trace_printk("tcp_hdr->ack_seq: %u\n", bpf_ntohl(tcp_hdr->ack_seq));
+  bpf_trace_printk("tcp_hdr->check: %u\n", tcp_hdr->check);
+  u16 tcphdr_length = tcp_hdr->doff;
+  bpf_trace_printk("tcp_hdr->doff (<=> header length): %u\n", tcphdr_length);
+
+  if (sport == LISTEN_PORT || dport == LISTEN_PORT) {
+    char *http_hdr = (char *)((u8 *)tcp_hdr + tcphdr_length * 4);
+    char *http_hdr2 = (char *)((u32 *)tcp_hdr + 8);
+    bpf_trace_printk("data: %p\n", data);
+    bpf_trace_printk("eth_hdr: %p\n", eth_hdr);
+    bpf_trace_printk("ip_hdr: %p\n", ip_hdr);
+    bpf_trace_printk("ip_hdr->tot_len: %u\n", bpf_ntohs(ip_hdr->tot_len));
+    bpf_trace_printk("tcp_hdr: %p\n", tcp_hdr);
+    bpf_trace_printk("http_hdr1: %p\n", http_hdr);
+    bpf_trace_printk("http_hdr2: %p\n", http_hdr2);
+    bpf_trace_printk("http_hdr-tcp_hdr: %u\n", http_hdr-(char *)tcp_hdr);
+    bpf_trace_printk("http_hdr2-tcp_hdr: %u\n", http_hdr2-(char *)((u32 *)tcp_hdr));
+    bpf_trace_printk("data_end : %p\n", data_end);
+    bpf_trace_printk("data_end-data : %u\n", (data_end-data));
+    bpf_trace_printk("header_size(byte) : %u\n", sizeof(struct tcphdr)+sizeof(struct iphdr)+sizeof(struct ethhdr));
+    bpf_trace_printk("==============================\n");
+
+    if (http_hdr + 1 > (char *)data_end) {
+      bpf_trace_printk("=== Too short\n");
+      return XDP_PASS;
+    }
+    bpf_trace_printk("Long enough ===\n");
+
+
+    /*
+#pragma clang loop unroll(full)
+    for (int i=0; i<BYTE_EXPLORE; i++) {
+      char cn = http_hdr[i];
+      char c = bpf_ntohs(cn);
+      bpf_trace_printk("=-=-= Char %u", c);
+      if (c=='E' || c=='T' || c == 'P' || c == ' ')
+        bpf_trace_printk("=-==-==-==-==-==-==-= %d: %u\n", i, http_hdr[i]);
+    }
+    */
+
+#pragma clang loop unroll(full)
+    for (int i = 0; i<16; i++)
+      bpf_trace_printk("data: %p -> %lu\n", ((u16 *)data+i), ((u16*)data)[i]);
+
+    // bpf_trace_printk("sizeof(tcp_hdr->doff) = %u\n", sizeof(tcp_hdr->doff));
+    // bpf_trace_printk("tcp_hdr[0]= %u\n", http_hdr[0]);
+    // bpf_trace_printk("tcp_hdr[1]= %u\n", http_hdr[1]);
+    // bpf_trace_printk("tcp_hdr[2]: %u\n", http_hdr[2]);
+    // bpf_trace_printk("tcp_hdr[3]: %u\n", http_hdr[3]);
+    // bpf_trace_printk("tcp_hdr[4]: %u\n", http_hdr[4]);
+    // bpf_trace_printk("tcp_hdr[5]: %u\n", http_hdr[5]);
+  } else {
+    bpf_trace_printk("Ignored tcp_hdr->source: %u, tcp_hdr->dest: %u\n", sport, dport);
+  }
+
+  bpf_trace_printk("=== Pass 5\n");
+  return XDP_PASS;
+}
+
+int xdp_prog1(struct xdp_md *ctx) {
+    bpf_trace_printk("Hi\n");
+    void* data_end = (void*)(long)ctx->data_end;
+    void* data = (void*)(long)ctx->data;
+    bpf_trace_printk("Test %u\n", data_end - data);
+    // int rc = XDP_PASS;
+    int rc = match_p0f(data, data_end);
+    bpf_trace_printk("Bye\n");
+    return rc;
+}
