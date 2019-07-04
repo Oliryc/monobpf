@@ -59,7 +59,7 @@ class PCPBCCModule(PCPBCCBase):
         PCPBCCBase.__init__(self, MODULE, config, log, err)
 
         # XXX DBG
-        self.debug = True
+        self.debug = False
 
         self.pid = None
         self.proc_filter = None
