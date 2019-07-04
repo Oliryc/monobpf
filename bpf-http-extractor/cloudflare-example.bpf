@@ -43,6 +43,7 @@ static inline int match_p0f(void *data, void *data_end) {
     bpf_trace_printk("=== Abort 2\n");
     return XDP_PASS;
   }
+  bpf_trace_printk("ip_hdr->tot_len1: %u\n", bpf_ntohs(ip_hdr->tot_len));
 
   // Print IP address (Note 127.0.0.1 <-> 2130706433)
   u32 sip = bpf_ntohl(ip_hdr->saddr);
@@ -63,9 +64,6 @@ static inline int match_p0f(void *data, void *data_end) {
   bpf_trace_printk("tcp_hdr->seq: %u\n", bpf_ntohl(tcp_hdr->seq));
   bpf_trace_printk("tcp_hdr->ack_seq: %u\n", bpf_ntohl(tcp_hdr->ack_seq));
   bpf_trace_printk("tcp_hdr->check: %u\n", tcp_hdr->check);
-  // u16 sport = tcp_hdr->source;
-  // u16 dport = tcp_hdr->dest;
-  // bpf_trace_printk("****ntohs tcp_hdr->doff: %u\n", bpf_ntohs(tcp_hdr->doff));
   u16 tcphdr_length = tcp_hdr->doff;
   bpf_trace_printk("tcp_hdr->doff (<=> header length): %u\n", tcphdr_length);
 
@@ -75,7 +73,7 @@ static inline int match_p0f(void *data, void *data_end) {
     bpf_trace_printk("data: %p\n", data);
     bpf_trace_printk("eth_hdr: %p\n", eth_hdr);
     bpf_trace_printk("ip_hdr: %p\n", ip_hdr);
-    bpf_trace_printk("ip_hdr->tot_len: %u\n", ip_hdr->tot_len);
+    bpf_trace_printk("ip_hdr->tot_len: %u\n", bpf_ntohs(ip_hdr->tot_len));
     bpf_trace_printk("tcp_hdr: %p\n", tcp_hdr);
     bpf_trace_printk("http_hdr1: %p\n", http_hdr);
     bpf_trace_printk("http_hdr2: %p\n", http_hdr2);
@@ -128,8 +126,8 @@ int xdp_prog1(struct xdp_md *ctx) {
     void* data_end = (void*)(long)ctx->data_end;
     void* data = (void*)(long)ctx->data;
     bpf_trace_printk("Test %u\n", data_end - data);
-    int rc = XDP_PASS;
-    //int rc = match_p0f(data, data_end);
+    // int rc = XDP_PASS;
+    int rc = match_p0f(data, data_end);
     bpf_trace_printk("Bye\n");
     return rc;
 }
