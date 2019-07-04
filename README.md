@@ -2,7 +2,17 @@
 
 monitoring tools
 
-Cf [ebpf.md](./ebpf.md) for background & notes about eBPF (outdated, most recent version on overleaf)
+Cf [ebpf.md](./ebpf.md) for background & notes about eBPF (*outdated, most recent version on overleaf*)
+
+*****************************************
+
+## [bpf-http-extractor](bpf-http-extractor)
+
+This folder contains the code attempting to parse the HTTP headers & method names.
+
+It’s only getting short paquets without any HTTP payload.
+
+*****************************************
 
 ## exporter_*.yml file
 
