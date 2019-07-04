@@ -138,7 +138,7 @@ class PCPBCCModule(PCPBCCBase):
         name = BASENS
         self.items = (
             # Name - reserved - type - semantics - units - help
-            (name + 'event', None, PM_TYPE_STRING, PM_SEM_INSTANT, units_none, 'gc event description'),
+            (name + 'event', None, PM_TYPE_STRING, PM_SEM_INSTANT, units_none, 'GC event description'),
             (name + 'duration', None, PM_TYPE_U64, PM_SEM_INSTANT, units_nsecs, 'duration of the'
                                                                                 'gc call'),
             (name + 'language', None, PM_TYPE_STRING, PM_SEM_INSTANT, units_none, 'runtime language'),
@@ -247,8 +247,7 @@ class PCPBCCModule(PCPBCCBase):
         # TODO See if we want to filter here too
         #if args.filter and args.filter not in description:
             #return
-        # TODO Exploiter les résultats
-        self.cache = PCPMetrics(event=description, duration=elapsed, lang="TODO") 
+        self.cache = PCPMetrics(event=description, duration=elapsed, lang=self.lang) 
         #print("%-8.3f %-8.2f %s" % (time.time() - start_ts, elapsed, description))
         #  self.log(str(self.cache))
         #  self.log("Handled gc event")
@@ -273,7 +272,7 @@ class PCPBCCModule(PCPBCCBase):
         #    self.cache[key] = v.value
         #    self.insts[key] = c_int(1)
 
-        self.insts = {"test"+str(i) : ct.c_int(1) for i in range(10)}
+        self.insts = {self.cache.event : ct.c_int(1) for i in range(1)}
         self.log("refresh: insts: "+str(self.insts))
 
         return self.insts
