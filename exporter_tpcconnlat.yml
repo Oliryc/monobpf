@@ -3,28 +3,28 @@ programs:
   - name: tcp_connexion_latency
     metrics:
       counters:
-        - name: latency_ipv4
-          help: tcp4 connection latency
+        - name: tcp_latency
+          help: Last TCP latency (in µs) for each process
           table: pid_lat
           labels:
             - name: pid
               size: 4
               decoders:
                 - name: uint
-            - name: proc_name
-              size: 26
-              decoders:
-                - name: string
     kprobes:
       tcp_v4_connect: trace_connect
       tcp_v6_connect: trace_connect
       tcp_rcv_state_process: trace_tcp_rcv_state_process
     code: |
-      //@begin=cpp@
         #include <uapi/linux/ptrace.h>
         #include <net/sock.h>
         #include <net/tcp_states.h>
         #include <bcc/proto.h>
+
+        // Pid to monitor ADAPT THIS TO YOUR NEED 
+        // Must be terminated by 0
+        //u32 pid_whitelist[] = {18453, 0};
+        u32 pid_whitelist = 18453;
 
         struct info_t {
             u64 ts;
@@ -32,6 +32,9 @@ programs:
             char task[TASK_COMM_LEN];
         };
         BPF_HASH(start, struct sock *, struct info_t);
+
+        // average latency by pid
+        BPF_HASH(pid_lat, u32, u64);
 
         // separate data structs for ipv4 and ipv6
         struct ipv4_data_t {
@@ -45,7 +48,6 @@ programs:
             char task[TASK_COMM_LEN];
         };
         BPF_PERF_OUTPUT(ipv4_events);
-
         struct ipv6_data_t {
             u64 ts_us;
             u32 pid;
@@ -57,17 +59,6 @@ programs:
             char task[TASK_COMM_LEN];
         };
         BPF_PERF_OUTPUT(ipv6_events);
-
-        // Minimal structure for export
-        struct export_min_t {
-            u32 pid;
-            // TODO Ajouter IPv4/v6
-            char task[TASK_COMM_LEN];
-        };
-
-        // last latency by pid
-        BPF_HASH(pid_lat, struct export_min_t, u64);
-
         int trace_connect(struct pt_regs *ctx, struct sock *sk)
         {
             u32 pid = bpf_get_current_pid_tgid();
@@ -94,14 +85,36 @@ programs:
             }
             u64 ts = infop->ts;
             u64 now = bpf_ktime_get_ns();
-
             u64 delta_us = (now - ts) / 1000ul;
 
-        #ifdef MIN_LATENCY
+            // Record latency
+            u64 latency_val = delta_us;
+            u32 current_pid = infop->pid;
+            // Take only pid in whitelist
+            int i = 0;
+            u32 pid_in_whitelist = pid_whitelist;
+            //#pragma clang loop unroll(full)
+            #pragma GCC unroll 1
+            /*
+            for (;pid_in_whitelist != 0 && pid_in_whitelist != current_pid; i++) {
+              //pid_in_whitelist = pid_whitelist[i++];
+            }
+            //pid_in_whitelist = pid_whitelist[i];
+            if (1 || pid_in_whitelist != 0) { // add only if we are interested by this pid
+              u64 *last_latency_val_p = pid_lat.lookup(&current_pid);
+              if (last_latency_val_p != 0) {
+                pid_lat.update(&current_pid, &latency_val);
+              } else {
+                pid_lat.insert(&current_pid, &latency_val);
+              }
+            }
+            */
+
+            #ifdef MATENCY
             if ( delta_us < DURATION_US ) {
                 return 0; // connect latency is below latency filter minimum
             }
-        #endif
+            #endif
             // pull in details
             u16 family = 0, dport = 0;
             family = skp->__sk_common.skc_family;
@@ -116,18 +129,6 @@ programs:
                 data4.delta_us = delta_us;
                 __builtin_memcpy(&data4.task, infop->task, sizeof(data4.task));
                 ipv4_events.perf_submit(ctx, &data4, sizeof(data4));
-
-                // Record latency
-                struct export_min_t export_data = {.pid = data4->pid};
-                __builtin_memcpy(&export_data.task, infop->task, sizeof(export_data.task));
-                u64 latency_val = delta_us;
-                u64 *last_latency_val_p = pid_lat.lookup(&export_data);
-                if (last_latency_val_p != 0) {
-                  pid_lat.update(&export_data, &latency_val);
-                } else {
-                  pid_lat.insert(&export_data, &latency_val);
-                }
-
             } else /* AF_INET6 */ {
                 struct ipv6_data_t data6 = {.pid = infop->pid, .ip = 6};
                 data6.ts_us = now / 1000;
@@ -139,20 +140,7 @@ programs:
                 data6.delta_us = delta_us;
                 __builtin_memcpy(&data6.task, infop->task, sizeof(data6.task));
                 ipv6_events.perf_submit(ctx, &data6, sizeof(data6));
-
-                // Record latency
-                struct export_min_t export_data = {.pid = data4->pid};
-                __builtin_memcpy(&export_data.task, infop->task, sizeof(export_data.task));
-                u64 latency_val = delta_us;
-                u64 *last_latency_val_p = pid_lat.lookup(&export_data);
-                if (last_latency_val_p != 0) {
-                  pid_lat.update(&export_data, &latency_val);
-                } else {
-                  pid_lat.insert(&export_data, &latency_val);
-                }
-
             }
             start.delete(&skp);
             return 0;
         }
-        //@end=ccp@
