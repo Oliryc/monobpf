@@ -155,7 +155,6 @@ static void test_bpf_perf_event(int map_fd, int num)
 		pmu_fds[i] = sys_perf_event_open(&attr, -1/*pid*/, i/*cpu*/,
 						 -1/*group_fd*/, 0);
 
-    printf("pmu_ %i\n", pmu_fds[i]);
     assert(pmu_fds[i] >= 0);
     assert(bpf_map_update_elem(map_fd, &key,
              &pmu_fds[i], BPF_ANY) == 0);
@@ -298,8 +297,8 @@ int main(int argc, char **argv)
 	struct bpf_map *map;
 	char filename[256];
 	int ret, err, i;
-  int numcpus = bpf_num_possible_cpus()/2;
-  printf("numcpus %i\n", numcpus);
+  int numcpus = bpf_num_possible_cpus();
+  printf("numcpus %i WARNING might be wrong\n", numcpus);
 
         struct config cfg = {                
 		.xdp_flags = XDP_FLAGS_UPDATE_IF_NOEXIST | XDP_FLAGS_DRV_MODE,
