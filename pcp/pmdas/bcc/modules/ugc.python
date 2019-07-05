@@ -46,7 +46,7 @@ bpf_src = "modules/ugc.bpf"
 MODULE = 'ugc'
 BASENS = 'proc.ugc.'
 units_count = pmUnits(0, 0, 1, 0, 0, PM_COUNT_ONE)
-units_nsecs = pmUnits(0, 1, 0, 0, PM_TIME_USEC, 0)
+units_usecs = pmUnits(0, 1, 0, 0, PM_TIME_USEC, 0)
 units_none = pmUnits(0, 0, 0, 0, 0, 0)
 
 #
@@ -138,7 +138,8 @@ class PCPBCCModule(PCPBCCBase):
         name = BASENS
         self.items = (
             # Name - reserved - type - semantics - units - help
-            (name + 'latency', None, PM_TYPE_U64, PM_SEM_COUNTER, units_count, 'GC event distribution'),
+            (name + 'latency', None, PM_TYPE_U64, PM_SEM_COUNTER,
+             units_usecs, 'GC event distribution'),
         )
         return True, self.items
 
@@ -251,26 +252,42 @@ class PCPBCCModule(PCPBCCBase):
 
     def refresh(self):
         """ Refresh BPF data """
-        self.log("refresh: cache: "+str(self.cache))
-        self.log("refresh: insts: "+str(self.insts))
-
         if self.bpf is None:
             return None
 
         dist = self.bpf["dist"]
         self.insts = self.read_log2_histogram(dist, self.cache)
+        self.log("self.insts " + str(self.insts))
+        self.log("cache " + str(self.cache))
         dist.clear()
 
 
-        return self.insts
+        return OrderedDict(map(lambda l: (l[0], l[1].value - 13),
+            self.insts.iteritems()
+           ))
+
+        #return self.insts
 
     def bpfdata(self, item, inst):
         """ Return BPF data as PCP metric value """
         try:
+            self.log("inst " + str(inst))
             key = self.pmdaIndom.inst_name_lookup(inst)
+            self.log("keycache" + str(self.cache))
+            self.log("keycache[key]" + str(self.cache[key]))
             return [self.cache[key], 1]
         except Exception:
             return [PMDA_FETCH_NOVALUES, 0]
+
+    def label_indom(self):
+        """ Instance domain labels """
+        return '{"statistic":"histogram"}'
+
+    def label_instance(self, inst):
+        """ Instance labels """
+        key = self.pmdaIndom.inst_name_lookup(inst)
+        bounds = key.split("-")
+        return '{"lower_bound":%s,"upper_bound":%s}' % (bounds[0], bounds[1])
 
 
 class Probe(object):
@@ -313,7 +330,7 @@ int trace_%s(struct pt_regs *ctx) {
     %s
     // TODO Enable this to get more detailed log
     //gcs.perf_submit(ctx, &event, sizeof(event));
-    dist.increment(bpf_log2l(elapsed));
+    dist.increment(bpf_log2l(elapsed/1000));
 
     return 0;
 }
