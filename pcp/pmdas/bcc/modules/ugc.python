@@ -33,7 +33,7 @@ from cpmda import PMDA_FETCH_NOVALUES
 
 from modules.pcpbcc import PCPBCCBase
 
-from collections import namedtuple
+from collections import namedtuple, OrderedDict
 
 #
 # BPF program
@@ -261,18 +261,26 @@ class PCPBCCModule(PCPBCCBase):
         self.log("cache " + str(self.cache))
         dist.clear()
 
+        # return self.insts
 
-        return OrderedDict(map(lambda l: (l[0], l[1].value - 13),
-            self.insts.iteritems()
+        it = self.insts.items()
+        self.log("TEST " + str(type(it)))
+        od = OrderedDict(map(lambda l: (l[0], c_int(0)), 
+              it
            ))
+        self.log("==== TEST od "+ str(od))
+        self.log("==== TEST insts "+ str(self.insts))
+        # return od
 
-        #return self.insts
+        return self.insts
 
     def bpfdata(self, item, inst):
         """ Return BPF data as PCP metric value """
         try:
-            self.log("inst " + str(inst))
-            key = self.pmdaIndom.inst_name_lookup(inst)
+            self.log("XXX type data->inst " + str(type(inst)))
+            self.log("XXX data->inst " + str(inst))
+            new_inst = inst+9
+            key = self.pmdaIndom.inst_name_lookup(new_inst)
             self.log("keycache" + str(self.cache))
             self.log("keycache[key]" + str(self.cache[key]))
             return [self.cache[key], 1]
