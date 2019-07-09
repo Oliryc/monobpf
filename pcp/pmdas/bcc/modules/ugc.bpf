@@ -15,7 +15,10 @@ struct entry_t {
     u64 field2;
 };
 
+// For detailed log of events
 BPF_PERF_OUTPUT(gcs);
 BPF_HASH(entry, u64, struct entry_t);
+
+BPF_HISTOGRAM(dist);
 
 // End of common part

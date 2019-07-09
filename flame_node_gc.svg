@@ -1,0 +1,1109 @@
+<?xml version="1.0" standalone="no"?>
+<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN" "http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd">
+<svg version="1.1" width="1200" height="1222" onload="init(evt)" viewBox="0 0 1200 1222" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
+<!-- Flame graph stack visualization. See https://github.com/brendangregg/FlameGraph for latest version, and http://www.brendangregg.com/flamegraphs.html for examples. -->
+<!-- NOTES:  -->
+<defs>
+	<linearGradient id="background" y1="0" y2="1" x1="0" x2="0" >
+		<stop stop-color="#eeeeee" offset="5%" />
+		<stop stop-color="#eeeeb0" offset="95%" />
+	</linearGradient>
+</defs>
+<style type="text/css">
+	text { font-family:Verdana; font-size:12px; fill:rgb(0,0,0); }
+	#search { opacity:0.1; cursor:pointer; }
+	#search:hover, #search.show { opacity:1; }
+	#subtitle { text-anchor:middle; font-color:rgb(160,160,160); }
+	#title { text-anchor:middle; font-size:17px}
+	#unzoom { cursor:pointer; }
+	#frames > *:hover { stroke:black; stroke-width:0.5; cursor:pointer; }
+	.hide { display:none; }
+	.parent { opacity:0.5; }
+</style>
+<script type="text/ecmascript">
+<![CDATA[
+	"use strict";
+	var details, searchbtn, unzoombtn, matchedtxt, svg, searching;
+	function init(evt) {
+		details = document.getElementById("details").firstChild;
+		searchbtn = document.getElementById("search");
+		unzoombtn = document.getElementById("unzoom");
+		matchedtxt = document.getElementById("matched");
+		svg = document.getElementsByTagName("svg")[0];
+		searching = 0;
+	}
+
+	window.addEventListener("click", function(e) {
+		var target = find_group(e.target);
+		if (target) {
+			if (target.nodeName == "a") {
+				if (e.ctrlKey === false) return;
+				e.preventDefault();
+			}
+			if (target.classList.contains("parent")) unzoom();
+			zoom(target);
+		}
+		else if (e.target.id == "unzoom") unzoom();
+		else if (e.target.id == "search") search_prompt();
+	}, false)
+
+	// mouse-over for info
+	// show
+	window.addEventListener("mouseover", function(e) {
+		var target = find_group(e.target);
+		if (target) details.nodeValue = "Function: " + g_to_text(target);
+	}, false)
+
+	// clear
+	window.addEventListener("mouseout", function(e) {
+		var target = find_group(e.target);
+		if (target) details.nodeValue = ' ';
+	}, false)
+
+	// ctrl-F for search
+	window.addEventListener("keydown",function (e) {
+		if (e.keyCode === 114 || (e.ctrlKey && e.keyCode === 70)) {
+			e.preventDefault();
+			search_prompt();
+		}
+	}, false)
+
+	// functions
+	function find_child(node, selector) {
+		var children = node.querySelectorAll(selector);
+		if (children.length) return children[0];
+		return;
+	}
+	function find_group(node) {
+		var parent = node.parentElement;
+		if (!parent) return;
+		if (parent.id == "frames") return node;
+		return find_group(parent);
+	}
+	function orig_save(e, attr, val) {
+		if (e.attributes["_orig_" + attr] != undefined) return;
+		if (e.attributes[attr] == undefined) return;
+		if (val == undefined) val = e.attributes[attr].value;
+		e.setAttribute("_orig_" + attr, val);
+	}
+	function orig_load(e, attr) {
+		if (e.attributes["_orig_"+attr] == undefined) return;
+		e.attributes[attr].value = e.attributes["_orig_" + attr].value;
+		e.removeAttribute("_orig_"+attr);
+	}
+	function g_to_text(e) {
+		var text = find_child(e, "title").firstChild.nodeValue;
+		return (text)
+	}
+	function g_to_func(e) {
+		var func = g_to_text(e);
+		// if there's any manipulation we want to do to the function
+		// name before it's searched, do it here before returning.
+		return (func);
+	}
+	function update_text(e) {
+		var r = find_child(e, "rect");
+		var t = find_child(e, "text");
+		var w = parseFloat(r.attributes.width.value) -3;
+		var txt = find_child(e, "title").textContent.replace(/\([^(]*\)$/,"");
+		t.attributes.x.value = parseFloat(r.attributes.x.value) + 3;
+
+		// Smaller than this size won't fit anything
+		if (w < 2 * 12 * 0.59) {
+			t.textContent = "";
+			return;
+		}
+
+		t.textContent = txt;
+		// Fit in full text width
+		if (/^ *$/.test(txt) || t.getSubStringLength(0, txt.length) < w)
+			return;
+
+		for (var x = txt.length - 2; x > 0; x--) {
+			if (t.getSubStringLength(0, x + 2) <= w) {
+				t.textContent = txt.substring(0, x) + "..";
+				return;
+			}
+		}
+		t.textContent = "";
+	}
+
+	// zoom
+	function zoom_reset(e) {
+		if (e.attributes != undefined) {
+			orig_load(e, "x");
+			orig_load(e, "width");
+		}
+		if (e.childNodes == undefined) return;
+		for (var i = 0, c = e.childNodes; i < c.length; i++) {
+			zoom_reset(c[i]);
+		}
+	}
+	function zoom_child(e, x, ratio) {
+		if (e.attributes != undefined) {
+			if (e.attributes.x != undefined) {
+				orig_save(e, "x");
+				e.attributes.x.value = (parseFloat(e.attributes.x.value) - x - 10) * ratio + 10;
+				if (e.tagName == "text")
+					e.attributes.x.value = find_child(e.parentNode, "rect[x]").attributes.x.value + 3;
+			}
+			if (e.attributes.width != undefined) {
+				orig_save(e, "width");
+				e.attributes.width.value = parseFloat(e.attributes.width.value) * ratio;
+			}
+		}
+
+		if (e.childNodes == undefined) return;
+		for (var i = 0, c = e.childNodes; i < c.length; i++) {
+			zoom_child(c[i], x - 10, ratio);
+		}
+	}
+	function zoom_parent(e) {
+		if (e.attributes) {
+			if (e.attributes.x != undefined) {
+				orig_save(e, "x");
+				e.attributes.x.value = 10;
+			}
+			if (e.attributes.width != undefined) {
+				orig_save(e, "width");
+				e.attributes.width.value = parseInt(svg.width.baseVal.value) - (10 * 2);
+			}
+		}
+		if (e.childNodes == undefined) return;
+		for (var i = 0, c = e.childNodes; i < c.length; i++) {
+			zoom_parent(c[i]);
+		}
+	}
+	function zoom(node) {
+		var attr = find_child(node, "rect").attributes;
+		var width = parseFloat(attr.width.value);
+		var xmin = parseFloat(attr.x.value);
+		var xmax = parseFloat(xmin + width);
+		var ymin = parseFloat(attr.y.value);
+		var ratio = (svg.width.baseVal.value - 2 * 10) / width;
+
+		// XXX: Workaround for JavaScript float issues (fix me)
+		var fudge = 0.0001;
+
+		unzoombtn.classList.remove("hide");
+
+		var el = document.getElementById("frames").children;
+		for (var i = 0; i < el.length; i++) {
+			var e = el[i];
+			var a = find_child(e, "rect").attributes;
+			var ex = parseFloat(a.x.value);
+			var ew = parseFloat(a.width.value);
+			var upstack;
+			// Is it an ancestor
+			if (0 == 0) {
+				upstack = parseFloat(a.y.value) > ymin;
+			} else {
+				upstack = parseFloat(a.y.value) < ymin;
+			}
+			if (upstack) {
+				// Direct ancestor
+				if (ex <= xmin && (ex+ew+fudge) >= xmax) {
+					e.classList.add("parent");
+					zoom_parent(e);
+					update_text(e);
+				}
+				// not in current path
+				else
+					e.classList.add("hide");
+			}
+			// Children maybe
+			else {
+				// no common path
+				if (ex < xmin || ex + fudge >= xmax) {
+					e.classList.add("hide");
+				}
+				else {
+					zoom_child(e, xmin, ratio);
+					update_text(e);
+				}
+			}
+		}
+	}
+	function unzoom() {
+		unzoombtn.classList.add("hide");
+		var el = document.getElementById("frames").children;
+		for(var i = 0; i < el.length; i++) {
+			el[i].classList.remove("parent");
+			el[i].classList.remove("hide");
+			zoom_reset(el[i]);
+			update_text(el[i]);
+		}
+	}
+
+	// search
+	function reset_search() {
+		var el = document.querySelectorAll("#frames rect");
+		for (var i = 0; i < el.length; i++) {
+			orig_load(el[i], "fill")
+		}
+	}
+	function search_prompt() {
+		if (!searching) {
+			var term = prompt("Enter a search term (regexp " +
+			    "allowed, eg: ^ext4_)", "");
+			if (term != null) {
+				search(term)
+			}
+		} else {
+			reset_search();
+			searching = 0;
+			searchbtn.classList.remove("show");
+			searchbtn.firstChild.nodeValue = "Search"
+			matchedtxt.classList.add("hide");
+			matchedtxt.firstChild.nodeValue = ""
+		}
+	}
+	function search(term) {
+		var re = new RegExp(term);
+		var el = document.getElementById("frames").children;
+		var matches = new Object();
+		var maxwidth = 0;
+		for (var i = 0; i < el.length; i++) {
+			var e = el[i];
+			var func = g_to_func(e);
+			var rect = find_child(e, "rect");
+			if (func == null || rect == null)
+				continue;
+
+			// Save max width. Only works as we have a root frame
+			var w = parseFloat(rect.attributes.width.value);
+			if (w > maxwidth)
+				maxwidth = w;
+
+			if (func.match(re)) {
+				// highlight
+				var x = parseFloat(rect.attributes.x.value);
+				orig_save(rect, "fill");
+				rect.attributes.fill.value = "rgb(230,0,230)";
+
+				// remember matches
+				if (matches[x] == undefined) {
+					matches[x] = w;
+				} else {
+					if (w > matches[x]) {
+						// overwrite with parent
+						matches[x] = w;
+					}
+				}
+				searching = 1;
+			}
+		}
+		if (!searching)
+			return;
+
+		searchbtn.classList.add("show");
+		searchbtn.firstChild.nodeValue = "Reset Search";
+
+		// calculate percent matched, excluding vertical overlap
+		var count = 0;
+		var lastx = -1;
+		var lastw = 0;
+		var keys = Array();
+		for (k in matches) {
+			if (matches.hasOwnProperty(k))
+				keys.push(k);
+		}
+		// sort the matched frames by their x location
+		// ascending, then width descending
+		keys.sort(function(a, b){
+			return a - b;
+		});
+		// Step through frames saving only the biggest bottom-up frames
+		// thanks to the sort order. This relies on the tree property
+		// where children are always smaller than their parents.
+		var fudge = 0.0001;	// JavaScript floating point
+		for (var k in keys) {
+			var x = parseFloat(keys[k]);
+			var w = matches[keys[k]];
+			if (x >= lastx + lastw - fudge) {
+				count += w;
+				lastx = x;
+				lastw = w;
+			}
+		}
+		// display matched percent
+		matchedtxt.classList.remove("hide");
+		var pct = 100 * count / maxwidth;
+		if (pct != 100) pct = pct.toFixed(1)
+		matchedtxt.firstChild.nodeValue = "Matched: " + pct + "%";
+	}
+]]>
+</script>
+<rect x="0.0" y="0" width="1200.0" height="1222.0" fill="url(#background)"  />
+<text id="title" x="600.00" y="24" >Flame Graph</text>
+<text id="details" x="10.00" y="1205" > </text>
+<text id="unzoom" x="10.00" y="24" class="hide">Reset Zoom</text>
+<text id="search" x="1090.00" y="24" >Search</text>
+<text id="matched" x="1090.00" y="1205" > </text>
+<g id="frames">
+<g >
+<title>v8::internal::LookupIterator::GetDataValue() const (1 samples, 0.81%)</title><rect x="105.2" y="389" width="9.5" height="15.0" fill="rgb(217,53,14)" rx="2" ry="2" />
+<text  x="108.16" y="399.5" ></text>
+</g>
+<g >
+<title>[unknown] (38 samples, 30.65%)</title><rect x="48.1" y="805" width="361.6" height="15.0" fill="rgb(207,153,15)" rx="2" ry="2" />
+<text  x="51.06" y="815.5" >[unknown]</text>
+</g>
+<g >
+<title>uv_run (42 samples, 33.87%)</title><rect x="19.5" y="1077" width="399.7" height="15.0" fill="rgb(253,185,4)" rx="2" ry="2" />
+<text  x="22.52" y="1087.5" >uv_run</text>
+</g>
+<g >
+<title>v8::internal::JSReceiver::OrdinaryDefineOwnProperty(v8::internal::Isolate*, v8::internal::Handle&lt;v8::internal::JSObject&gt;, v8::internal::Handle&lt;v8::internal::Object&gt;, v8::internal::PropertyDescriptor*, v8::internal::ShouldThrow) (1 samples, 0.81%)</title><rect x="76.6" y="677" width="9.5" height="15.0" fill="rgb(221,226,3)" rx="2" ry="2" />
+<text  x="79.61" y="687.5" ></text>
+</g>
+<g >
+<title>change_protection (1 samples, 0.81%)</title><rect x="114.7" y="117" width="9.5" height="15.0" fill="rgb(221,46,43)" rx="2" ry="2" />
+<text  x="117.68" y="127.5" ></text>
+</g>
+<g >
+<title>v8::internal::LoadHandler::LoadFromPrototype(v8::internal::Isolate*, v8::internal::Handle&lt;v8::internal::Map&gt;, v8::internal::Handle&lt;v8::internal::JSReceiver&gt;, v8::internal::Handle&lt;v8::internal::Smi&gt;, v8::internal::MaybeHandle&lt;v8::internal::Object&gt;, v8::internal::MaybeHandle&lt;v8::internal::Object&gt;) (1 samples, 0.81%)</title><rect x="48.1" y="613" width="9.5" height="15.0" fill="rgb(229,217,34)" rx="2" ry="2" />
+<text  x="51.06" y="623.5" ></text>
+</g>
+<g >
+<title>uv__read (41 samples, 33.06%)</title><rect x="29.0" y="1029" width="390.2" height="15.0" fill="rgb(240,17,23)" rx="2" ry="2" />
+<text  x="32.03" y="1039.5" >uv__read</text>
+</g>
+<g >
+<title>[unknown] (5 samples, 4.03%)</title><rect x="86.1" y="613" width="47.6" height="15.0" fill="rgb(223,155,35)" rx="2" ry="2" />
+<text  x="89.13" y="623.5" >[unk..</text>
+</g>
+<g >
+<title>[unknown] (4 samples, 3.23%)</title><rect x="48.1" y="725" width="38.0" height="15.0" fill="rgb(243,146,15)" rx="2" ry="2" />
+<text  x="51.06" y="735.5" >[un..</text>
+</g>
+<g >
+<title>[unknown] (5 samples, 4.03%)</title><rect x="86.1" y="597" width="47.6" height="15.0" fill="rgb(205,8,3)" rx="2" ry="2" />
+<text  x="89.13" y="607.5" >[unk..</text>
+</g>
+<g >
+<title>[unknown] (4 samples, 3.23%)</title><rect x="48.1" y="741" width="38.0" height="15.0" fill="rgb(249,142,14)" rx="2" ry="2" />
+<text  x="51.06" y="751.5" >[un..</text>
+</g>
+<g >
+<title>v8::internal::InnerPointerToCodeCache::GetCacheEntry(unsigned long) (1 samples, 0.81%)</title><rect x="95.6" y="293" width="9.6" height="15.0" fill="rgb(253,80,6)" rx="2" ry="2" />
+<text  x="98.65" y="303.5" ></text>
+</g>
+<g >
+<title>node::AsyncWrap::MakeCallback(v8::Local&lt;v8::Function&gt;, int, v8::Local&lt;v8::Value&gt;*) (40 samples, 32.26%)</title><rect x="29.0" y="949" width="380.7" height="15.0" fill="rgb(254,91,30)" rx="2" ry="2" />
+<text  x="32.03" y="959.5" >node::AsyncWrap::MakeCallback(v8::Local&lt;v8::Functio..</text>
+</g>
+<g >
+<title>v8::internal::MemoryChunk::SetReadAndWritable() (1 samples, 0.81%)</title><rect x="114.7" y="245" width="9.5" height="15.0" fill="rgb(224,210,5)" rx="2" ry="2" />
+<text  x="117.68" y="255.5" ></text>
+</g>
+<g >
+<title>__vfs_write (1 samples, 0.81%)</title><rect x="428.7" y="1045" width="9.5" height="15.0" fill="rgb(235,74,37)" rx="2" ry="2" />
+<text  x="431.71" y="1055.5" ></text>
+</g>
+<g >
+<title>v8::internal::IncrementalMarking::SetNewSpacePageFlags(v8::internal::MemoryChunk*, bool) (1 samples, 0.81%)</title><rect x="400.2" y="661" width="9.5" height="15.0" fill="rgb(220,56,45)" rx="2" ry="2" />
+<text  x="403.16" y="671.5" ></text>
+</g>
+<g >
+<title>sys_write (1 samples, 0.81%)</title><rect x="428.7" y="1077" width="9.5" height="15.0" fill="rgb(208,200,42)" rx="2" ry="2" />
+<text  x="431.71" y="1087.5" ></text>
+</g>
+<g >
+<title>v8::internal::InnerPointerToCodeCache::GetCacheEntry(unsigned long) (2 samples, 1.61%)</title><rect x="114.7" y="309" width="19.0" height="15.0" fill="rgb(226,31,5)" rx="2" ry="2" />
+<text  x="117.68" y="319.5" ></text>
+</g>
+<g >
+<title>v8::internal::Heap::CollectGarbage(v8::internal::AllocationSpace, v8::internal::GarbageCollectionReason, v8::GCCallbackFlags) (29 samples, 23.39%)</title><rect x="133.7" y="709" width="276.0" height="15.0" fill="rgb(242,187,47)" rx="2" ry="2" />
+<text  x="136.71" y="719.5" >v8::internal::Heap::CollectGarbage(v..</text>
+</g>
+<g >
+<title>v8::internal::Map::RawCopy(v8::internal::Handle&lt;v8::internal::Map&gt;, int, int) (1 samples, 0.81%)</title><rect x="67.1" y="597" width="9.5" height="15.0" fill="rgb(228,85,50)" rx="2" ry="2" />
+<text  x="70.10" y="607.5" ></text>
+</g>
+<g >
+<title>uv__async_io (1 samples, 0.81%)</title><rect x="19.5" y="1045" width="9.5" height="15.0" fill="rgb(252,160,28)" rx="2" ry="2" />
+<text  x="22.52" y="1055.5" ></text>
+</g>
+<g >
+<title>[unknown] (39 samples, 31.45%)</title><rect x="38.5" y="837" width="371.2" height="15.0" fill="rgb(252,150,22)" rx="2" ry="2" />
+<text  x="41.55" y="847.5" >[unknown]</text>
+</g>
+<g >
+<title>v8::internal::IC::ConfigureVectorState(v8::internal::Handle&lt;v8::internal::Name&gt;, v8::internal::Handle&lt;v8::internal::Map&gt;, v8::internal::MaybeObjectHandle const&amp;) (1 samples, 0.81%)</title><rect x="95.6" y="357" width="9.6" height="15.0" fill="rgb(254,107,14)" rx="2" ry="2" />
+<text  x="98.65" y="367.5" ></text>
+</g>
+<g >
+<title>non-virtual thunk to v8::internal::PointersUpdatingVisitor::VisitRootPointer(v8::internal::Root, char const*, v8::internal::Object**) (1 samples, 0.81%)</title><rect x="171.8" y="565" width="9.5" height="15.0" fill="rgb(211,163,43)" rx="2" ry="2" />
+<text  x="174.77" y="575.5" ></text>
+</g>
+<g >
+<title>v8::internal::StoreIC::UpdateCaches(v8::internal::LookupIterator*, v8::internal::Handle&lt;v8::internal::Object&gt;, v8::internal::Object::StoreFromKeyed) (2 samples, 1.61%)</title><rect x="114.7" y="421" width="19.0" height="15.0" fill="rgb(246,57,38)" rx="2" ry="2" />
+<text  x="117.68" y="431.5" ></text>
+</g>
+<g >
+<title>[unknown] (38 samples, 30.65%)</title><rect x="48.1" y="773" width="361.6" height="15.0" fill="rgb(214,25,32)" rx="2" ry="2" />
+<text  x="51.06" y="783.5" >[unknown]</text>
+</g>
+<g >
+<title>[unknown] (1 samples, 0.81%)</title><rect x="409.7" y="805" width="9.5" height="15.0" fill="rgb(209,180,2)" rx="2" ry="2" />
+<text  x="412.68" y="815.5" ></text>
+</g>
+<g >
+<title>v8::internal::Bootstrapper::Iterate(v8::internal::RootVisitor*) (1 samples, 0.81%)</title><rect x="162.3" y="581" width="9.5" height="15.0" fill="rgb(227,39,19)" rx="2" ry="2" />
+<text  x="165.26" y="591.5" ></text>
+</g>
+<g >
+<title>v8::internal::Execution::Call(v8::internal::Isolate*, v8::internal::Handle&lt;v8::internal::Object&gt;, v8::internal::Handle&lt;v8::internal::Object&gt;, int, v8::internal::Handle&lt;v8::internal::Object&gt;*) (40 samples, 32.26%)</title><rect x="29.0" y="901" width="380.7" height="15.0" fill="rgb(252,71,16)" rx="2" ry="2" />
+<text  x="32.03" y="911.5" >v8::internal::Execution::Call(v8::internal::Isolate..</text>
+</g>
+<g >
+<title>bool v8::internal::MarkBit::Set&lt;(v8::internal::AccessMode)0&gt;() [clone .isra.205] (1 samples, 0.81%)</title><rect x="181.3" y="629" width="9.5" height="15.0" fill="rgb(250,41,16)" rx="2" ry="2" />
+<text  x="184.29" y="639.5" ></text>
+</g>
+<g >
+<title>v8::internal::SerializerDeserializer::Iterate(v8::internal::Isolate*, v8::internal::RootVisitor*) (1 samples, 0.81%)</title><rect x="171.8" y="581" width="9.5" height="15.0" fill="rgb(233,155,13)" rx="2" ry="2" />
+<text  x="174.77" y="591.5" ></text>
+</g>
+<g >
+<title>node::InternalMakeCallback(node::Environment*, v8::Local&lt;v8::Object&gt;, v8::Local&lt;v8::Function&gt;, int, v8::Local&lt;v8::Value&gt;*, node::async_context) (1 samples, 0.81%)</title><rect x="409.7" y="965" width="9.5" height="15.0" fill="rgb(246,63,51)" rx="2" ry="2" />
+<text  x="412.68" y="975.5" ></text>
+</g>
+<g >
+<title>[unknown] (1 samples, 0.81%)</title><rect x="409.7" y="821" width="9.5" height="15.0" fill="rgb(250,194,29)" rx="2" ry="2" />
+<text  x="412.68" y="831.5" ></text>
+</g>
+<g >
+<title>v8::internal::Heap::MarkCompact() (28 samples, 22.58%)</title><rect x="133.7" y="677" width="266.5" height="15.0" fill="rgb(227,182,36)" rx="2" ry="2" />
+<text  x="136.71" y="687.5" >v8::internal::Heap::MarkCompact()</text>
+</g>
+<g >
+<title>[unknown] (5 samples, 4.03%)</title><rect x="86.1" y="645" width="47.6" height="15.0" fill="rgb(219,157,13)" rx="2" ry="2" />
+<text  x="89.13" y="655.5" >[unk..</text>
+</g>
+<g >
+<title>node::InternalMakeCallback(node::Environment*, v8::Local&lt;v8::Object&gt;, v8::Local&lt;v8::Function&gt;, int, v8::Local&lt;v8::Value&gt;*, node::async_context) (40 samples, 32.26%)</title><rect x="29.0" y="933" width="380.7" height="15.0" fill="rgb(224,149,24)" rx="2" ry="2" />
+<text  x="32.03" y="943.5" >node::InternalMakeCallback(node::Environment*, v8::..</text>
+</g>
+<g >
+<title>v8::internal::Map::CopyReplaceDescriptors(v8::internal::Handle&lt;v8::internal::Map&gt;, v8::internal::Handle&lt;v8::internal::DescriptorArray&gt;, v8::internal::Handle&lt;v8::internal::LayoutDescriptor&gt;, v8::internal::TransitionFlag, v8::internal::MaybeHandle&lt;v8::internal::Name&gt;, char const*, v8::internal::SimpleTransitionFlag) (1 samples, 0.81%)</title><rect x="67.1" y="629" width="9.5" height="15.0" fill="rgb(233,87,31)" rx="2" ry="2" />
+<text  x="70.10" y="639.5" ></text>
+</g>
+<g >
+<title>v8::internal::LoadIC::Load(v8::internal::Handle&lt;v8::internal::Object&gt;, v8::internal::Handle&lt;v8::internal::Name&gt;) (2 samples, 1.61%)</title><rect x="95.6" y="421" width="19.1" height="15.0" fill="rgb(241,224,44)" rx="2" ry="2" />
+<text  x="98.65" y="431.5" ></text>
+</g>
+<g >
+<title>[unknown] (5 samples, 4.03%)</title><rect x="86.1" y="581" width="47.6" height="15.0" fill="rgb(251,95,16)" rx="2" ry="2" />
+<text  x="89.13" y="591.5" >[unk..</text>
+</g>
+<g >
+<title>v8::internal::MarkCompactCollector::UpdatePointersAfterEvacuation() (5 samples, 4.03%)</title><rect x="133.7" y="629" width="47.6" height="15.0" fill="rgb(242,128,52)" rx="2" ry="2" />
+<text  x="136.71" y="639.5" >v8::..</text>
+</g>
+<g >
+<title>v8::internal::StackFrameIterator::Advance() (1 samples, 0.81%)</title><rect x="95.6" y="325" width="9.6" height="15.0" fill="rgb(222,130,32)" rx="2" ry="2" />
+<text  x="98.65" y="335.5" ></text>
+</g>
+<g >
+<title>v8::internal::JSObject::MigrateSlowToFast(v8::internal::Handle&lt;v8::internal::JSObject&gt;, int, char const*) (1 samples, 0.81%)</title><rect x="57.6" y="645" width="9.5" height="15.0" fill="rgb(246,71,26)" rx="2" ry="2" />
+<text  x="60.58" y="655.5" ></text>
+</g>
+<g >
+<title>do_mprotect_pkey (1 samples, 0.81%)</title><rect x="114.7" y="149" width="9.5" height="15.0" fill="rgb(234,125,24)" rx="2" ry="2" />
+<text  x="117.68" y="159.5" ></text>
+</g>
+<g >
+<title>[unknown] (5 samples, 4.03%)</title><rect x="86.1" y="533" width="47.6" height="15.0" fill="rgb(229,72,10)" rx="2" ry="2" />
+<text  x="89.13" y="543.5" >[unk..</text>
+</g>
+<g >
+<title>v8::internal::LoadIC::ComputeHandler(v8::internal::LookupIterator*) (1 samples, 0.81%)</title><rect x="48.1" y="629" width="9.5" height="15.0" fill="rgb(241,32,46)" rx="2" ry="2" />
+<text  x="51.06" y="639.5" ></text>
+</g>
+<g >
+<title>[unknown] (5 samples, 4.03%)</title><rect x="86.1" y="485" width="47.6" height="15.0" fill="rgb(227,52,27)" rx="2" ry="2" />
+<text  x="89.13" y="495.5" >[unk..</text>
+</g>
+<g >
+<title>[unknown] (39 samples, 31.45%)</title><rect x="38.5" y="821" width="371.2" height="15.0" fill="rgb(228,152,1)" rx="2" ry="2" />
+<text  x="41.55" y="831.5" >[unknown]</text>
+</g>
+<g >
+<title>v8::internal::Worklist&lt;v8::internal::HeapObject*, 64&gt;::Push(int, v8::internal::HeapObject*) (1 samples, 0.81%)</title><rect x="381.1" y="597" width="9.5" height="15.0" fill="rgb(235,166,30)" rx="2" ry="2" />
+<text  x="384.13" y="607.5" ></text>
+</g>
+<g >
+<title>v8::internal::Object::GetProperty(v8::internal::LookupIterator*) (1 samples, 0.81%)</title><rect x="105.2" y="405" width="9.5" height="15.0" fill="rgb(240,208,4)" rx="2" ry="2" />
+<text  x="108.16" y="415.5" ></text>
+</g>
+<g >
+<title>v8::internal::Sweeper::SweeperTask::RunInternal() (22 samples, 17.74%)</title><rect x="980.6" y="1109" width="209.4" height="15.0" fill="rgb(253,43,25)" rx="2" ry="2" />
+<text  x="983.65" y="1119.5" >v8::internal::Sweeper::Swee..</text>
+</g>
+<g >
+<title>v8::Function::Call(v8::Local&lt;v8::Context&gt;, v8::Local&lt;v8::Value&gt;, int, v8::Local&lt;v8::Value&gt;*) (5 samples, 4.03%)</title><rect x="86.1" y="709" width="47.6" height="15.0" fill="rgb(232,19,45)" rx="2" ry="2" />
+<text  x="89.13" y="719.5" >v8::..</text>
+</g>
+<g >
+<title>[unknown] (38 samples, 30.65%)</title><rect x="48.1" y="789" width="361.6" height="15.0" fill="rgb(252,33,27)" rx="2" ry="2" />
+<text  x="51.06" y="799.5" >[unknown]</text>
+</g>
+<g >
+<title>v8::internal::Runtime_LoadIC_Miss(int, v8::internal::Object**, v8::internal::Isolate*) (2 samples, 1.61%)</title><rect x="95.6" y="437" width="19.1" height="15.0" fill="rgb(210,84,6)" rx="2" ry="2" />
+<text  x="98.65" y="447.5" ></text>
+</g>
+<g >
+<title>start_thread (77 samples, 62.10%)</title><rect x="457.3" y="1141" width="732.7" height="15.0" fill="rgb(226,156,15)" rx="2" ry="2" />
+<text  x="460.26" y="1151.5" >start_thread</text>
+</g>
+<g >
+<title>entry_SYSCALL_64_after_hwframe (1 samples, 0.81%)</title><rect x="428.7" y="1109" width="9.5" height="15.0" fill="rgb(232,176,49)" rx="2" ry="2" />
+<text  x="431.71" y="1119.5" ></text>
+</g>
+<g >
+<title>uv__io_poll (42 samples, 33.87%)</title><rect x="19.5" y="1061" width="399.7" height="15.0" fill="rgb(224,100,2)" rx="2" ry="2" />
+<text  x="22.52" y="1071.5" >uv__io_poll</text>
+</g>
+<g >
+<title>v8::internal::IC::UpdatePolymorphicIC(v8::internal::Handle&lt;v8::internal::Name&gt;, v8::internal::MaybeObjectHandle const&amp;) (1 samples, 0.81%)</title><rect x="95.6" y="373" width="9.6" height="15.0" fill="rgb(248,0,1)" rx="2" ry="2" />
+<text  x="98.65" y="383.5" ></text>
+</g>
+<g >
+<title>mprotect_fixup (1 samples, 0.81%)</title><rect x="114.7" y="133" width="9.5" height="15.0" fill="rgb(217,173,26)" rx="2" ry="2" />
+<text  x="117.68" y="143.5" ></text>
+</g>
+<g >
+<title>v8::internal::IC::GetHostFunction() const (1 samples, 0.81%)</title><rect x="95.6" y="341" width="9.6" height="15.0" fill="rgb(209,118,26)" rx="2" ry="2" />
+<text  x="98.65" y="351.5" ></text>
+</g>
+<g >
+<title>v8::internal::JSObject::UpdatePrototypeUserRegistration(v8::internal::Handle&lt;v8::internal::Map&gt;, v8::internal::Handle&lt;v8::internal::Map&gt;, v8::internal::Isolate*) (1 samples, 0.81%)</title><rect x="57.6" y="629" width="9.5" height="15.0" fill="rgb(240,229,21)" rx="2" ry="2" />
+<text  x="60.58" y="639.5" ></text>
+</g>
+<g >
+<title>[unknown] (40 samples, 32.26%)</title><rect x="29.0" y="885" width="380.7" height="15.0" fill="rgb(232,153,54)" rx="2" ry="2" />
+<text  x="32.03" y="895.5" >[unknown]</text>
+</g>
+<g >
+<title>flush_tlb_mm_range (1 samples, 0.81%)</title><rect x="114.7" y="85" width="9.5" height="15.0" fill="rgb(226,145,50)" rx="2" ry="2" />
+<text  x="117.68" y="95.5" ></text>
+</g>
+<g >
+<title>v8::internal::Map::Copy(v8::internal::Handle&lt;v8::internal::Map&gt;, char const*) (1 samples, 0.81%)</title><rect x="67.1" y="645" width="9.5" height="15.0" fill="rgb(210,148,53)" rx="2" ry="2" />
+<text  x="70.10" y="655.5" ></text>
+</g>
+<g >
+<title>node::inspector::(anonymous namespace)::InspectorConsoleCall(v8::FunctionCallbackInfo&lt;v8::Value&gt; const&amp;) (5 samples, 4.03%)</title><rect x="86.1" y="725" width="47.6" height="15.0" fill="rgb(206,165,12)" rx="2" ry="2" />
+<text  x="89.13" y="735.5" >node..</text>
+</g>
+<g >
+<title>v8::internal::Map::CopyDropDescriptors(v8::internal::Handle&lt;v8::internal::Map&gt;) (1 samples, 0.81%)</title><rect x="67.1" y="613" width="9.5" height="15.0" fill="rgb(214,109,48)" rx="2" ry="2" />
+<text  x="70.10" y="623.5" ></text>
+</g>
+<g >
+<title>v8::internal::Map::GetOrCreatePrototypeChainValidityCell(v8::internal::Handle&lt;v8::internal::Map&gt;, v8::internal::Isolate*) (1 samples, 0.81%)</title><rect x="48.1" y="597" width="9.5" height="15.0" fill="rgb(229,129,24)" rx="2" ry="2" />
+<text  x="51.06" y="607.5" ></text>
+</g>
+<g >
+<title>v8::internal::StackFrame::ComputeType(v8::internal::StackFrameIteratorBase const*, v8::internal::StackFrame::State*) (2 samples, 1.61%)</title><rect x="114.7" y="325" width="19.0" height="15.0" fill="rgb(241,221,49)" rx="2" ry="2" />
+<text  x="117.68" y="335.5" ></text>
+</g>
+<g >
+<title>[unknown] (1 samples, 0.81%)</title><rect x="409.7" y="869" width="9.5" height="15.0" fill="rgb(230,50,8)" rx="2" ry="2" />
+<text  x="412.68" y="879.5" ></text>
+</g>
+<g >
+<title>v8::internal::Map::IsUnboxedDoubleField(v8::internal::FieldIndex) const (1 samples, 0.81%)</title><rect x="105.2" y="373" width="9.5" height="15.0" fill="rgb(221,113,2)" rx="2" ry="2" />
+<text  x="108.16" y="383.5" ></text>
+</g>
+<g >
+<title>node::(anonymous namespace)::Parser::Proxy&lt;int (node::(anonymous namespace)::Parser::*)(), &amp;node::(anonymous namespace)::Parser::on_headers_complete&gt;::Raw(http_parser*) (40 samples, 32.26%)</title><rect x="29.0" y="965" width="380.7" height="15.0" fill="rgb(208,135,25)" rx="2" ry="2" />
+<text  x="32.03" y="975.5" >node::(anonymous namespace)::Parser::Proxy&lt;int (nod..</text>
+</g>
+<g >
+<title>node (124 samples, 100.00%)</title><rect x="10.0" y="1157" width="1180.0" height="15.0" fill="rgb(213,214,36)" rx="2" ry="2" />
+<text  x="13.00" y="1167.5" >node</text>
+</g>
+<g >
+<title>v8::internal::SemiSpace::Commit() (1 samples, 0.81%)</title><rect x="400.2" y="677" width="9.5" height="15.0" fill="rgb(232,34,47)" rx="2" ry="2" />
+<text  x="403.16" y="687.5" ></text>
+</g>
+<g >
+<title>v8::internal::Runtime_ObjectCreate(int, v8::internal::Object**, v8::internal::Isolate*) (1 samples, 0.81%)</title><rect x="67.1" y="693" width="9.5" height="15.0" fill="rgb(236,101,48)" rx="2" ry="2" />
+<text  x="70.10" y="703.5" ></text>
+</g>
+<g >
+<title>v8::internal::IC::PatchCache(v8::internal::Handle&lt;v8::internal::Name&gt;, v8::internal::MaybeObjectHandle const&amp;) (2 samples, 1.61%)</title><rect x="114.7" y="405" width="19.0" height="15.0" fill="rgb(240,118,15)" rx="2" ry="2" />
+<text  x="117.68" y="415.5" ></text>
+</g>
+<g >
+<title>[unknown] (1 samples, 0.81%)</title><rect x="409.7" y="853" width="9.5" height="15.0" fill="rgb(238,211,25)" rx="2" ry="2" />
+<text  x="412.68" y="863.5" ></text>
+</g>
+<g >
+<title>v8::internal::MarkingVisitor&lt;(v8::internal::FixedArrayVisitationMode)0, (v8::internal::TraceRetainingPathMode)0, v8::internal::IncrementalMarkingState&gt;::VisitCodeTarget(v8::internal::Code*, v8::internal::RelocInfo*) (2 samples, 1.61%)</title><rect x="305.0" y="597" width="19.0" height="15.0" fill="rgb(206,16,43)" rx="2" ry="2" />
+<text  x="308.00" y="607.5" ></text>
+</g>
+<g >
+<title>v8::internal::ConcurrentMarkingVisitor::ShouldVisit(v8::internal::HeapObject*) (13 samples, 10.48%)</title><rect x="685.6" y="1093" width="123.8" height="15.0" fill="rgb(220,165,38)" rx="2" ry="2" />
+<text  x="688.65" y="1103.5" >v8::internal::C..</text>
+</g>
+<g >
+<title>__libc_start_main (42 samples, 33.87%)</title><rect x="19.5" y="1125" width="399.7" height="15.0" fill="rgb(228,191,9)" rx="2" ry="2" />
+<text  x="22.52" y="1135.5" >__libc_start_main</text>
+</g>
+<g >
+<title>v8::internal::LoadIC::Load(v8::internal::Handle&lt;v8::internal::Object&gt;, v8::internal::Handle&lt;v8::internal::Name&gt;) (1 samples, 0.81%)</title><rect x="48.1" y="661" width="9.5" height="15.0" fill="rgb(249,193,15)" rx="2" ry="2" />
+<text  x="51.06" y="671.5" ></text>
+</g>
+<g >
+<title>[unknown] (1 samples, 0.81%)</title><rect x="409.7" y="789" width="9.5" height="15.0" fill="rgb(220,166,26)" rx="2" ry="2" />
+<text  x="412.68" y="799.5" ></text>
+</g>
+<g >
+<title>non-virtual thunk to v8::internal::PointersUpdatingVisitor::VisitRootPointer(v8::internal::Root, char const*, v8::internal::Object**) (2 samples, 1.61%)</title><rect x="143.2" y="581" width="19.1" height="15.0" fill="rgb(228,110,51)" rx="2" ry="2" />
+<text  x="146.23" y="591.5" ></text>
+</g>
+<g >
+<title>void v8::internal::BodyDescriptorBase::IteratePointers&lt;v8::internal::MarkingVisitor&lt;(v8::internal::FixedArrayVisitationMode)0, (v8::internal::TraceRetainingPathMode)0, v8::internal::IncrementalMarkingState&gt; &gt;(v8::internal::HeapObject*, int, int, v8::internal::MarkingVisitor&lt;(v8::internal::FixedArrayVisitationMode)0, (v8::internal::TraceRetainingPathMode)0, v8::internal::IncrementalMarkingState&gt;*) (3 samples, 2.42%)</title><rect x="362.1" y="613" width="28.5" height="15.0" fill="rgb(217,79,2)" rx="2" ry="2" />
+<text  x="365.10" y="623.5" >vo..</text>
+</g>
+<g >
+<title>v8::internal::StubCache::Clear() (1 samples, 0.81%)</title><rect x="390.6" y="645" width="9.6" height="15.0" fill="rgb(244,134,0)" rx="2" ry="2" />
+<text  x="393.65" y="655.5" ></text>
+</g>
+<g >
+<title>v8::internal::Heap::IterateStrongRoots(v8::internal::RootVisitor*, v8::internal::VisitMode) (1 samples, 0.81%)</title><rect x="190.8" y="629" width="9.5" height="15.0" fill="rgb(210,123,9)" rx="2" ry="2" />
+<text  x="193.81" y="639.5" ></text>
+</g>
+<g >
+<title>[unknown] (1 samples, 0.81%)</title><rect x="409.7" y="773" width="9.5" height="15.0" fill="rgb(252,87,54)" rx="2" ry="2" />
+<text  x="412.68" y="783.5" ></text>
+</g>
+<g >
+<title>v8::internal::ConcurrentMarking::Run(int, v8::internal::ConcurrentMarking::TaskState*) (55 samples, 44.35%)</title><rect x="457.3" y="1109" width="523.3" height="15.0" fill="rgb(252,44,2)" rx="2" ry="2" />
+<text  x="460.26" y="1119.5" >v8::internal::ConcurrentMarking::Run(int, v8::internal::ConcurrentMarki..</text>
+</g>
+<g >
+<title>v8::internal::JSObject::OptimizeAsPrototype(v8::internal::Handle&lt;v8::internal::JSObject&gt;, bool) (1 samples, 0.81%)</title><rect x="67.1" y="661" width="9.5" height="15.0" fill="rgb(222,39,14)" rx="2" ry="2" />
+<text  x="70.10" y="671.5" ></text>
+</g>
+<g >
+<title>node::AsyncWrap::MakeCallback(v8::Local&lt;v8::Function&gt;, int, v8::Local&lt;v8::Value&gt;*) (1 samples, 0.81%)</title><rect x="409.7" y="981" width="9.5" height="15.0" fill="rgb(252,188,15)" rx="2" ry="2" />
+<text  x="412.68" y="991.5" ></text>
+</g>
+<g >
+<title>v8::internal::IC::PatchCache(v8::internal::Handle&lt;v8::internal::Name&gt;, v8::internal::MaybeObjectHandle const&amp;) (1 samples, 0.81%)</title><rect x="95.6" y="389" width="9.6" height="15.0" fill="rgb(236,147,29)" rx="2" ry="2" />
+<text  x="98.65" y="399.5" ></text>
+</g>
+<g >
+<title>v8::internal::IC::GetHostFunction() const (2 samples, 1.61%)</title><rect x="114.7" y="357" width="19.0" height="15.0" fill="rgb(218,92,34)" rx="2" ry="2" />
+<text  x="117.68" y="367.5" ></text>
+</g>
+<g >
+<title>v8::internal::MarkCompactCollector::ProcessMarkingWorklist() (19 samples, 15.32%)</title><rect x="209.8" y="629" width="180.8" height="15.0" fill="rgb(210,150,12)" rx="2" ry="2" />
+<text  x="212.84" y="639.5" >v8::internal::MarkCompa..</text>
+</g>
+<g >
+<title>native_flush_tlb_others (1 samples, 0.81%)</title><rect x="114.7" y="69" width="9.5" height="15.0" fill="rgb(209,170,5)" rx="2" ry="2" />
+<text  x="117.68" y="79.5" ></text>
+</g>
+<g >
+<title>v8::internal::Heap::PerformGarbageCollection(v8::internal::GarbageCollector, v8::GCCallbackFlags) (29 samples, 23.39%)</title><rect x="133.7" y="693" width="276.0" height="15.0" fill="rgb(205,138,34)" rx="2" ry="2" />
+<text  x="136.71" y="703.5" >v8::internal::Heap::PerformGarbageCo..</text>
+</g>
+<g >
+<title>[unknown] (1 samples, 0.81%)</title><rect x="409.7" y="837" width="9.5" height="15.0" fill="rgb(234,90,44)" rx="2" ry="2" />
+<text  x="412.68" y="847.5" ></text>
+</g>
+<g >
+<title>change_protection_range (1 samples, 0.81%)</title><rect x="114.7" y="101" width="9.5" height="15.0" fill="rgb(206,14,16)" rx="2" ry="2" />
+<text  x="117.68" y="111.5" ></text>
+</g>
+<g >
+<title>v8::internal::HeapObject::SizeFromMap(v8::internal::Map*) const (1 samples, 0.81%)</title><rect x="200.3" y="629" width="9.5" height="15.0" fill="rgb(242,54,27)" rx="2" ry="2" />
+<text  x="203.32" y="639.5" ></text>
+</g>
+<g >
+<title>v8::internal::IC::UpdatePolymorphicIC(v8::internal::Handle&lt;v8::internal::Name&gt;, v8::internal::MaybeObjectHandle const&amp;) (2 samples, 1.61%)</title><rect x="114.7" y="389" width="19.0" height="15.0" fill="rgb(253,84,41)" rx="2" ry="2" />
+<text  x="117.68" y="399.5" ></text>
+</g>
+<g >
+<title>v8::internal::SerializerDeserializer::Iterate(v8::internal::Isolate*, v8::internal::RootVisitor*) (1 samples, 0.81%)</title><rect x="190.8" y="613" width="9.5" height="15.0" fill="rgb(244,189,50)" rx="2" ry="2" />
+<text  x="193.81" y="623.5" ></text>
+</g>
+<g >
+<title>v8::internal::Heap::CollectAllGarbage(int, v8::internal::GarbageCollectionReason, v8::GCCallbackFlags) (29 samples, 23.39%)</title><rect x="133.7" y="725" width="276.0" height="15.0" fill="rgb(219,104,46)" rx="2" ry="2" />
+<text  x="136.71" y="735.5" >v8::internal::Heap::CollectAllGarbag..</text>
+</g>
+<g >
+<title>v8::internal::MaybeHandle&lt;v8::internal::Object&gt; v8::internal::(anonymous namespace)::HandleApiCallHelper&lt;false&gt;(v8::internal::Isolate*, v8::internal::Handle&lt;v8::internal::HeapObject&gt;, v8::internal::Handle&lt;v8::internal::HeapObject&gt;, v8::internal::Handle&lt;v8::internal::FunctionTemplateInfo&gt;, v8::internal::Handle&lt;v8::internal::Object&gt;, v8::internal::BuiltinArguments) (34 samples, 27.42%)</title><rect x="86.1" y="741" width="323.6" height="15.0" fill="rgb(240,158,33)" rx="2" ry="2" />
+<text  x="89.13" y="751.5" >v8::internal::MaybeHandle&lt;v8::internal::Obj..</text>
+</g>
+<g >
+<title>v8::internal::MarkCompactCollector::MarkLiveObjects() (22 samples, 17.74%)</title><rect x="181.3" y="645" width="209.3" height="15.0" fill="rgb(213,213,11)" rx="2" ry="2" />
+<text  x="184.29" y="655.5" >v8::internal::MarkCompactCo..</text>
+</g>
+<g >
+<title>[unknown] (5 samples, 4.03%)</title><rect x="86.1" y="517" width="47.6" height="15.0" fill="rgb(212,105,20)" rx="2" ry="2" />
+<text  x="89.13" y="527.5" >[unk..</text>
+</g>
+<g >
+<title>v8::internal::Factory::InitializeMap(v8::internal::Map*, v8::internal::InstanceType, int, v8::internal::ElementsKind, int) (1 samples, 0.81%)</title><rect x="67.1" y="581" width="9.5" height="15.0" fill="rgb(208,173,6)" rx="2" ry="2" />
+<text  x="70.10" y="591.5" ></text>
+</g>
+<g >
+<title>v8::internal::(anonymous namespace)::NumberOfAvailableCores() (1 samples, 0.81%)</title><rect x="133.7" y="613" width="9.5" height="15.0" fill="rgb(231,27,7)" rx="2" ry="2" />
+<text  x="136.71" y="623.5" ></text>
+</g>
+<g >
+<title>[unknown] (1 samples, 0.81%)</title><rect x="409.7" y="885" width="9.5" height="15.0" fill="rgb(233,4,23)" rx="2" ry="2" />
+<text  x="412.68" y="895.5" ></text>
+</g>
+<g >
+<title>eventfd_write (1 samples, 0.81%)</title><rect x="428.7" y="1029" width="9.5" height="15.0" fill="rgb(224,112,33)" rx="2" ry="2" />
+<text  x="431.71" y="1039.5" ></text>
+</g>
+<g >
+<title>do_syscall_64 (1 samples, 0.81%)</title><rect x="428.7" y="1093" width="9.5" height="15.0" fill="rgb(250,217,37)" rx="2" ry="2" />
+<text  x="431.71" y="1103.5" ></text>
+</g>
+<g >
+<title>v8::Function::Call(v8::Local&lt;v8::Value&gt;, int, v8::Local&lt;v8::Value&gt;*) (1 samples, 0.81%)</title><rect x="409.7" y="933" width="9.5" height="15.0" fill="rgb(219,134,26)" rx="2" ry="2" />
+<text  x="412.68" y="943.5" ></text>
+</g>
+<g >
+<title>v8::internal::MarkCompactCollector::CollectGarbage() (27 samples, 21.77%)</title><rect x="133.7" y="661" width="256.9" height="15.0" fill="rgb(224,16,42)" rx="2" ry="2" />
+<text  x="136.71" y="671.5" >v8::internal::MarkCompactCollector..</text>
+</g>
+<g >
+<title>void v8::internal::BodyDescriptorBase::IteratePointers&lt;v8::internal::MarkingVisitor&lt;(v8::internal::FixedArrayVisitationMode)0, (v8::internal::TraceRetainingPathMode)0, v8::internal::IncrementalMarkingState&gt; &gt;(v8::internal::HeapObject*, int, int, v8::internal::MarkingVisitor&lt;(v8::internal::FixedArrayVisitationMode)0, (v8::internal::TraceRetainingPathMode)0, v8::internal::IncrementalMarkingState&gt;*) (1 samples, 0.81%)</title><rect x="333.5" y="597" width="9.6" height="15.0" fill="rgb(253,2,37)" rx="2" ry="2" />
+<text  x="336.55" y="607.5" ></text>
+</g>
+<g >
+<title>v8::internal::Runtime_StoreIC_Miss(int, v8::internal::Object**, v8::internal::Isolate*) (2 samples, 1.61%)</title><rect x="114.7" y="453" width="19.0" height="15.0" fill="rgb(229,143,8)" rx="2" ry="2" />
+<text  x="117.68" y="463.5" ></text>
+</g>
+<g >
+<title>node::InternalCallbackScope::Close() (1 samples, 0.81%)</title><rect x="409.7" y="949" width="9.5" height="15.0" fill="rgb(253,165,37)" rx="2" ry="2" />
+<text  x="412.68" y="959.5" ></text>
+</g>
+<g >
+<title>v8::internal::JSReceiver::GetOwnPropertyDescriptor(v8::internal::LookupIterator*, v8::internal::PropertyDescriptor*) (1 samples, 0.81%)</title><rect x="76.6" y="661" width="9.5" height="15.0" fill="rgb(209,215,30)" rx="2" ry="2" />
+<text  x="79.61" y="671.5" ></text>
+</g>
+<g >
+<title>[Missed User Stack] (1 samples, 0.81%)</title><rect x="10.0" y="1141" width="9.5" height="15.0" fill="rgb(221,175,31)" rx="2" ry="2" />
+<text  x="13.00" y="1151.5" ></text>
+</g>
+<g >
+<title>do_syscall_64 (1 samples, 0.81%)</title><rect x="114.7" y="181" width="9.5" height="15.0" fill="rgb(240,103,21)" rx="2" ry="2" />
+<text  x="117.68" y="191.5" ></text>
+</g>
+<g >
+<title>entry_SYSCALL_64_after_hwframe (1 samples, 0.81%)</title><rect x="114.7" y="197" width="9.5" height="15.0" fill="rgb(224,12,29)" rx="2" ry="2" />
+<text  x="117.68" y="207.5" ></text>
+</g>
+<g >
+<title>non-virtual thunk to node::(anonymous namespace)::Parser::OnStreamRead(long, uv_buf_t const&amp;) (41 samples, 33.06%)</title><rect x="29.0" y="997" width="390.2" height="15.0" fill="rgb(254,188,36)" rx="2" ry="2" />
+<text  x="32.03" y="1007.5" >non-virtual thunk to node::(anonymous namespace)::Par..</text>
+</g>
+<g >
+<title>[unknown] (3 samples, 2.42%)</title><rect x="48.1" y="709" width="28.5" height="15.0" fill="rgb(215,124,24)" rx="2" ry="2" />
+<text  x="51.06" y="719.5" >[u..</text>
+</g>
+<g >
+<title>void v8::internal::BodyDescriptorBase::IterateBodyImpl&lt;v8::internal::MarkingVisitor&lt;(v8::internal::FixedArrayVisitationMode)0, (v8::internal::TraceRetainingPathMode)0, v8::internal::IncrementalMarkingState&gt; &gt;(v8::internal::Map*, v8::internal::HeapObject*, int, int, v8::internal::MarkingVisitor&lt;(v8::internal::FixedArrayVisitationMode)0, (v8::internal::TraceRetainingPathMode)0, v8::internal::IncrementalMarkingState&gt;*) (1 samples, 0.81%)</title><rect x="333.5" y="613" width="9.6" height="15.0" fill="rgb(237,99,24)" rx="2" ry="2" />
+<text  x="336.55" y="623.5" ></text>
+</g>
+<g >
+<title>[unknown] (5 samples, 4.03%)</title><rect x="86.1" y="629" width="47.6" height="15.0" fill="rgb(213,127,18)" rx="2" ry="2" />
+<text  x="89.13" y="639.5" >[unk..</text>
+</g>
+<g >
+<title>v8::internal::StoreIC::Store(v8::internal::Handle&lt;v8::internal::Object&gt;, v8::internal::Handle&lt;v8::internal::Name&gt;, v8::internal::Handle&lt;v8::internal::Object&gt;, v8::internal::Object::StoreFromKeyed) (2 samples, 1.61%)</title><rect x="114.7" y="437" width="19.0" height="15.0" fill="rgb(236,13,47)" rx="2" ry="2" />
+<text  x="117.68" y="447.5" ></text>
+</g>
+<g >
+<title>v8::internal::LoadIC::UpdateCaches(v8::internal::LookupIterator*) (1 samples, 0.81%)</title><rect x="48.1" y="645" width="9.5" height="15.0" fill="rgb(233,60,3)" rx="2" ry="2" />
+<text  x="51.06" y="655.5" ></text>
+</g>
+<g >
+<title>v8::internal::Execution::Call(v8::internal::Isolate*, v8::internal::Handle&lt;v8::internal::Object&gt;, v8::internal::Handle&lt;v8::internal::Object&gt;, int, v8::internal::Handle&lt;v8::internal::Object&gt;*) (1 samples, 0.81%)</title><rect x="409.7" y="901" width="9.5" height="15.0" fill="rgb(216,119,18)" rx="2" ry="2" />
+<text  x="412.68" y="911.5" ></text>
+</g>
+<g >
+<title>v8::internal::JSReceiver::DefineProperty(v8::internal::Isolate*, v8::internal::Handle&lt;v8::internal::Object&gt;, v8::internal::Handle&lt;v8::internal::Object&gt;, v8::internal::Handle&lt;v8::internal::Object&gt;) (1 samples, 0.81%)</title><rect x="76.6" y="693" width="9.5" height="15.0" fill="rgb(245,184,53)" rx="2" ry="2" />
+<text  x="79.61" y="703.5" ></text>
+</g>
+<g >
+<title>v8::internal::SetPermissions(void*, unsigned long, v8::PageAllocator::Permission) (1 samples, 0.81%)</title><rect x="114.7" y="229" width="9.5" height="15.0" fill="rgb(216,2,25)" rx="2" ry="2" />
+<text  x="117.68" y="239.5" ></text>
+</g>
+<g >
+<title>[unknown] (5 samples, 4.03%)</title><rect x="86.1" y="501" width="47.6" height="15.0" fill="rgb(220,56,14)" rx="2" ry="2" />
+<text  x="89.13" y="511.5" >[unk..</text>
+</g>
+<g >
+<title>[unknown] (1 samples, 0.81%)</title><rect x="409.7" y="757" width="9.5" height="15.0" fill="rgb(244,138,40)" rx="2" ry="2" />
+<text  x="412.68" y="767.5" ></text>
+</g>
+<g >
+<title>v8::internal::MarkCompactCollector::Evacuate() (5 samples, 4.03%)</title><rect x="133.7" y="645" width="47.6" height="15.0" fill="rgb(237,80,52)" rx="2" ry="2" />
+<text  x="136.71" y="655.5" >v8::..</text>
+</g>
+<g >
+<title>[unknown] (40 samples, 32.26%)</title><rect x="29.0" y="869" width="380.7" height="15.0" fill="rgb(245,0,0)" rx="2" ry="2" />
+<text  x="32.03" y="879.5" >[unknown]</text>
+</g>
+<g >
+<title>[unknown] (5 samples, 4.03%)</title><rect x="86.1" y="661" width="47.6" height="15.0" fill="rgb(207,200,49)" rx="2" ry="2" />
+<text  x="89.13" y="671.5" >[unk..</text>
+</g>
+<g >
+<title>smp_call_function_many (1 samples, 0.81%)</title><rect x="114.7" y="53" width="9.5" height="15.0" fill="rgb(217,127,26)" rx="2" ry="2" />
+<text  x="117.68" y="63.5" ></text>
+</g>
+<g >
+<title>v8::internal::ConcurrentMarkingVisitor::VisitPointersInSnapshot(v8::internal::HeapObject*, v8::internal::SlotSnapshot const&amp;) (4 samples, 3.23%)</title><rect x="942.6" y="1093" width="38.0" height="15.0" fill="rgb(211,12,29)" rx="2" ry="2" />
+<text  x="945.58" y="1103.5" >v8:..</text>
+</g>
+<g >
+<title>[unknown] (5 samples, 4.03%)</title><rect x="86.1" y="469" width="47.6" height="15.0" fill="rgb(220,160,45)" rx="2" ry="2" />
+<text  x="89.13" y="479.5" >[unk..</text>
+</g>
+<g >
+<title>uv__stream_io (41 samples, 33.06%)</title><rect x="29.0" y="1045" width="390.2" height="15.0" fill="rgb(214,127,32)" rx="2" ry="2" />
+<text  x="32.03" y="1055.5" >uv__stream_io</text>
+</g>
+<g >
+<title>[unknown] (44 samples, 35.48%)</title><rect x="19.5" y="1141" width="418.7" height="15.0" fill="rgb(212,12,16)" rx="2" ry="2" />
+<text  x="22.52" y="1151.5" >[unknown]</text>
+</g>
+<g >
+<title>[unknown] (4 samples, 3.23%)</title><rect x="48.1" y="757" width="38.0" height="15.0" fill="rgb(205,89,33)" rx="2" ry="2" />
+<text  x="51.06" y="767.5" >[un..</text>
+</g>
+<g >
+<title>v8::internal::Runtime_LoadIC_Miss(int, v8::internal::Object**, v8::internal::Isolate*) (1 samples, 0.81%)</title><rect x="48.1" y="677" width="9.5" height="15.0" fill="rgb(212,221,11)" rx="2" ry="2" />
+<text  x="51.06" y="687.5" ></text>
+</g>
+<g >
+<title>v8::internal::Heap::IterateStrongRoots(v8::internal::RootVisitor*, v8::internal::VisitMode) (4 samples, 3.23%)</title><rect x="143.2" y="597" width="38.1" height="15.0" fill="rgb(244,117,4)" rx="2" ry="2" />
+<text  x="146.23" y="607.5" >v8:..</text>
+</g>
+<g >
+<title>_int_malloc (1 samples, 0.81%)</title><rect x="447.7" y="1141" width="9.6" height="15.0" fill="rgb(208,84,49)" rx="2" ry="2" />
+<text  x="450.74" y="1151.5" ></text>
+</g>
+<g >
+<title>node::LibuvStreamWrap::ReadStart()::{lambda(uv_stream_s*, long, uv_buf_t const*)#2}::_FUN(uv_stream_s*, long, uv_buf_t const*) (41 samples, 33.06%)</title><rect x="29.0" y="1013" width="390.2" height="15.0" fill="rgb(214,7,41)" rx="2" ry="2" />
+<text  x="32.03" y="1023.5" >node::LibuvStreamWrap::ReadStart()::{lambda(uv_stream..</text>
+</g>
+<g >
+<title>std::__detail::_Map_base&lt;v8::internal::MemoryChunk*, std::pair&lt;v8::internal::MemoryChunk* const, long&gt;, std::allocator&lt;std::pair&lt;v8::internal::MemoryChunk* const, long&gt; &gt;, std::__detail::_Select1st, std::equal_to&lt;v8::internal::MemoryChunk*&gt;, v8::internal::MemoryChunk::Hasher, std::__detail::_Mod_range_hashing, std::__detail::_Default_ranged_hash, std::__detail::_Prime_rehash_policy, std::__detail::_Hashtable_traits&lt;true, false, true&gt;, true&gt;::operator[](v8::internal::MemoryChunk* const&amp;) (6 samples, 4.84%)</title><rect x="752.3" y="1077" width="57.1" height="15.0" fill="rgb(246,36,5)" rx="2" ry="2" />
+<text  x="755.26" y="1087.5" >std::_..</text>
+</g>
+<g >
+<title>sys_mprotect (1 samples, 0.81%)</title><rect x="114.7" y="165" width="9.5" height="15.0" fill="rgb(236,20,14)" rx="2" ry="2" />
+<text  x="117.68" y="175.5" ></text>
+</g>
+<g >
+<title>v8::internal::JSObject::MakePrototypesFast(v8::internal::Handle&lt;v8::internal::Object&gt;, v8::internal::WhereToStart, v8::internal::Isolate*) (1 samples, 0.81%)</title><rect x="57.6" y="661" width="9.5" height="15.0" fill="rgb(208,186,7)" rx="2" ry="2" />
+<text  x="60.58" y="671.5" ></text>
+</g>
+<g >
+<title>v8::internal::ConcurrentMarkingVisitor::VisitPointers(v8::internal::HeapObject*, v8::internal::Object**, v8::internal::Object**) (12 samples, 9.68%)</title><rect x="828.4" y="1093" width="114.2" height="15.0" fill="rgb(213,97,22)" rx="2" ry="2" />
+<text  x="831.39" y="1103.5" >v8::internal::..</text>
+</g>
+<g >
+<title>[unknown] (40 samples, 32.26%)</title><rect x="29.0" y="853" width="380.7" height="15.0" fill="rgb(242,227,1)" rx="2" ry="2" />
+<text  x="32.03" y="863.5" >[unknown]</text>
+</g>
+<g >
+<title>v8::internal::Builtin_ObjectDefineProperty(int, v8::internal::Object**, v8::internal::Isolate*) (1 samples, 0.81%)</title><rect x="76.6" y="709" width="9.5" height="15.0" fill="rgb(225,98,37)" rx="2" ry="2" />
+<text  x="79.61" y="719.5" ></text>
+</g>
+<g >
+<title>all (124 samples, 100%)</title><rect x="10.0" y="1173" width="1180.0" height="15.0" fill="rgb(213,222,9)" rx="2" ry="2" />
+<text  x="13.00" y="1183.5" ></text>
+</g>
+<g >
+<title>v8::internal::StackFrame::ComputeType(v8::internal::StackFrameIteratorBase const*, v8::internal::StackFrame::State*) (1 samples, 0.81%)</title><rect x="95.6" y="309" width="9.6" height="15.0" fill="rgb(227,33,22)" rx="2" ry="2" />
+<text  x="98.65" y="319.5" ></text>
+</g>
+<g >
+<title>v8::internal::MarkCompactCollector::Finish() (1 samples, 0.81%)</title><rect x="390.6" y="661" width="9.6" height="15.0" fill="rgb(240,24,16)" rx="2" ry="2" />
+<text  x="393.65" y="671.5" ></text>
+</g>
+<g >
+<title>v8::internal::MarkingVisitor&lt;(v8::internal::FixedArrayVisitationMode)0, (v8::internal::TraceRetainingPathMode)0, v8::internal::IncrementalMarkingState&gt;::VisitEmbeddedPointer(v8::internal::Code*, v8::internal::RelocInfo*) (1 samples, 0.81%)</title><rect x="324.0" y="597" width="9.5" height="15.0" fill="rgb(210,126,18)" rx="2" ry="2" />
+<text  x="327.03" y="607.5" ></text>
+</g>
+<g >
+<title>v8::internal::Heap::GcSafeFindCodeForInnerPointer(unsigned long) (2 samples, 1.61%)</title><rect x="114.7" y="293" width="19.0" height="15.0" fill="rgb(244,79,35)" rx="2" ry="2" />
+<text  x="117.68" y="303.5" ></text>
+</g>
+<g >
+<title>__write (1 samples, 0.81%)</title><rect x="428.7" y="1125" width="9.5" height="15.0" fill="rgb(233,63,25)" rx="2" ry="2" />
+<text  x="431.71" y="1135.5" ></text>
+</g>
+<g >
+<title>[unknown] (5 samples, 4.03%)</title><rect x="86.1" y="677" width="47.6" height="15.0" fill="rgb(239,76,16)" rx="2" ry="2" />
+<text  x="89.13" y="687.5" >[unk..</text>
+</g>
+<g >
+<title>[unknown] (5 samples, 4.03%)</title><rect x="86.1" y="549" width="47.6" height="15.0" fill="rgb(228,62,39)" rx="2" ry="2" />
+<text  x="89.13" y="559.5" >[unk..</text>
+</g>
+<g >
+<title>v8::internal::Sweeper::EnsurePageIsIterable(v8::internal::Page*) (2 samples, 1.61%)</title><rect x="114.7" y="277" width="19.0" height="15.0" fill="rgb(234,93,27)" rx="2" ry="2" />
+<text  x="117.68" y="287.5" ></text>
+</g>
+<g >
+<title>http_parser_execute (40 samples, 32.26%)</title><rect x="29.0" y="981" width="380.7" height="15.0" fill="rgb(253,49,24)" rx="2" ry="2" />
+<text  x="32.03" y="991.5" >http_parser_execute</text>
+</g>
+<g >
+<title>vfs_write (1 samples, 0.81%)</title><rect x="428.7" y="1061" width="9.5" height="15.0" fill="rgb(218,115,14)" rx="2" ry="2" />
+<text  x="431.71" y="1071.5" ></text>
+</g>
+<g >
+<title>[unknown] (1 samples, 0.81%)</title><rect x="19.5" y="1029" width="9.5" height="15.0" fill="rgb(220,182,52)" rx="2" ry="2" />
+<text  x="22.52" y="1039.5" ></text>
+</g>
+<g >
+<title>[unknown] (5 samples, 4.03%)</title><rect x="86.1" y="565" width="47.6" height="15.0" fill="rgb(234,45,10)" rx="2" ry="2" />
+<text  x="89.13" y="575.5" >[unk..</text>
+</g>
+<g >
+<title>smp_call_function_many (1 samples, 0.81%)</title><rect x="114.7" y="37" width="9.5" height="15.0" fill="rgb(252,105,29)" rx="2" ry="2" />
+<text  x="117.68" y="47.5" ></text>
+</g>
+<g >
+<title>eventfd_write (1 samples, 0.81%)</title><rect x="428.7" y="1013" width="9.5" height="15.0" fill="rgb(242,216,18)" rx="2" ry="2" />
+<text  x="431.71" y="1023.5" ></text>
+</g>
+<g >
+<title>v8::internal::Runtime_LoadIC_Miss(int, v8::internal::Object**, v8::internal::Isolate*) (1 samples, 0.81%)</title><rect x="57.6" y="693" width="9.5" height="15.0" fill="rgb(213,111,32)" rx="2" ry="2" />
+<text  x="60.58" y="703.5" ></text>
+</g>
+<g >
+<title>v8::internal::Bitmap::Clear() (1 samples, 0.81%)</title><rect x="1180.5" y="1077" width="9.5" height="15.0" fill="rgb(252,112,32)" rx="2" ry="2" />
+<text  x="1183.48" y="1087.5" ></text>
+</g>
+<g >
+<title>__GI___libc_free (1 samples, 0.81%)</title><rect x="438.2" y="1141" width="9.5" height="15.0" fill="rgb(216,51,8)" rx="2" ry="2" />
+<text  x="441.23" y="1151.5" ></text>
+</g>
+<g >
+<title>void v8::internal::BodyDescriptorBase::IterateMaybeWeakPointer&lt;v8::internal::MarkingVisitor&lt;(v8::internal::FixedArrayVisitationMode)0, (v8::internal::TraceRetainingPathMode)0, v8::internal::IncrementalMarkingState&gt; &gt;(v8::internal::HeapObject*, int, v8::internal::MarkingVisitor&lt;(v8::internal::FixedArrayVisitationMode)0, (v8::internal::TraceRetainingPathMode)0, v8::internal::IncrementalMarkingState&gt;*) (2 samples, 1.61%)</title><rect x="343.1" y="613" width="19.0" height="15.0" fill="rgb(234,72,26)" rx="2" ry="2" />
+<text  x="346.06" y="623.5" ></text>
+</g>
+<g >
+<title>mprotect (1 samples, 0.81%)</title><rect x="114.7" y="213" width="9.5" height="15.0" fill="rgb(240,83,1)" rx="2" ry="2" />
+<text  x="117.68" y="223.5" ></text>
+</g>
+<g >
+<title>v8::internal::ObjectVisitor::VisitRelocInfo(v8::internal::RelocIterator*) (4 samples, 3.23%)</title><rect x="295.5" y="613" width="38.0" height="15.0" fill="rgb(250,27,38)" rx="2" ry="2" />
+<text  x="298.48" y="623.5" >v8:..</text>
+</g>
+<g >
+<title>node::Start(v8::Isolate*, node::IsolateData*, std::vector&lt;std::__cxx11::basic_string&lt;char, std::char_traits&lt;char&gt;, std::allocator&lt;char&gt; &gt;, std::allocator&lt;std::__cxx11::basic_string&lt;char, std::char_traits&lt;char&gt;, std::allocator&lt;char&gt; &gt; &gt; &gt; const&amp;, std::vector&lt;std::__cxx11::basic_string&lt;char, std::char_traits&lt;char&gt;, std::allocator&lt;char&gt; &gt;, std::allocator&lt;std::__cxx11::basic_string&lt;char, std::char_traits&lt;char&gt;, std::allocator&lt;char&gt; &gt; &gt; &gt; const&amp;) (42 samples, 33.87%)</title><rect x="19.5" y="1093" width="399.7" height="15.0" fill="rgb(210,163,42)" rx="2" ry="2" />
+<text  x="22.52" y="1103.5" >node::Start(v8::Isolate*, node::IsolateData*, std::vec..</text>
+</g>
+<g >
+<title>v8::internal::Builtin_HandleApiCall(int, v8::internal::Object**, v8::internal::Isolate*) (34 samples, 27.42%)</title><rect x="86.1" y="757" width="323.6" height="15.0" fill="rgb(249,215,46)" rx="2" ry="2" />
+<text  x="89.13" y="767.5" >v8::internal::Builtin_HandleApiCall(int, v8..</text>
+</g>
+<g >
+<title>v8::internal::IC::ConfigureVectorState(v8::internal::Handle&lt;v8::internal::Name&gt;, v8::internal::Handle&lt;v8::internal::Map&gt;, v8::internal::MaybeObjectHandle const&amp;) (2 samples, 1.61%)</title><rect x="114.7" y="373" width="19.0" height="15.0" fill="rgb(205,113,25)" rx="2" ry="2" />
+<text  x="117.68" y="383.5" ></text>
+</g>
+<g >
+<title>node::Start(int, char**) (42 samples, 33.87%)</title><rect x="19.5" y="1109" width="399.7" height="15.0" fill="rgb(217,155,13)" rx="2" ry="2" />
+<text  x="22.52" y="1119.5" >node::Start(int, char**)</text>
+</g>
+<g >
+<title>node::BackgroundRunner(void*) (77 samples, 62.10%)</title><rect x="457.3" y="1125" width="732.7" height="15.0" fill="rgb(237,58,2)" rx="2" ry="2" />
+<text  x="460.26" y="1135.5" >node::BackgroundRunner(void*)</text>
+</g>
+<g >
+<title>v8::Function::Call(v8::Local&lt;v8::Context&gt;, v8::Local&lt;v8::Value&gt;, int, v8::Local&lt;v8::Value&gt;*) (1 samples, 0.81%)</title><rect x="409.7" y="917" width="9.5" height="15.0" fill="rgb(225,54,27)" rx="2" ry="2" />
+<text  x="412.68" y="927.5" ></text>
+</g>
+<g >
+<title>v8::internal::Execution::Call(v8::internal::Isolate*, v8::internal::Handle&lt;v8::internal::Object&gt;, v8::internal::Handle&lt;v8::internal::Object&gt;, int, v8::internal::Handle&lt;v8::internal::Object&gt;*) (5 samples, 4.03%)</title><rect x="86.1" y="693" width="47.6" height="15.0" fill="rgb(235,151,9)" rx="2" ry="2" />
+<text  x="89.13" y="703.5" >v8::..</text>
+</g>
+<g >
+<title>v8::internal::Heap::IterateRoots(v8::internal::RootVisitor*, v8::internal::VisitMode) (4 samples, 3.23%)</title><rect x="143.2" y="613" width="38.1" height="15.0" fill="rgb(243,113,54)" rx="2" ry="2" />
+<text  x="146.23" y="623.5" >v8:..</text>
+</g>
+<g >
+<title>v8::internal::Sweeper::ParallelSweepPage(v8::internal::Page*, v8::internal::AllocationSpace) (2 samples, 1.61%)</title><rect x="114.7" y="261" width="19.0" height="15.0" fill="rgb(237,85,21)" rx="2" ry="2" />
+<text  x="117.68" y="271.5" ></text>
+</g>
+<g >
+<title>[unknown] (1 samples, 0.81%)</title><rect x="48.1" y="693" width="9.5" height="15.0" fill="rgb(208,144,47)" rx="2" ry="2" />
+<text  x="51.06" y="703.5" ></text>
+</g>
+<g >
+<title>v8::internal::Sweeper::RawSweep(v8::internal::Page*, v8::internal::Sweeper::FreeListRebuildingMode, v8::internal::FreeSpaceTreatmentMode) (1 samples, 0.81%)</title><rect x="124.2" y="245" width="9.5" height="15.0" fill="rgb(224,95,4)" rx="2" ry="2" />
+<text  x="127.19" y="255.5" ></text>
+</g>
+<g >
+<title>__lll_lock_wait (1 samples, 0.81%)</title><rect x="419.2" y="1125" width="9.5" height="15.0" fill="rgb(245,105,15)" rx="2" ry="2" />
+<text  x="422.19" y="1135.5" ></text>
+</g>
+<g >
+<title>v8::internal::Heap::GcSafeFindCodeForInnerPointer(unsigned long) (1 samples, 0.81%)</title><rect x="95.6" y="277" width="9.6" height="15.0" fill="rgb(217,74,4)" rx="2" ry="2" />
+<text  x="98.65" y="287.5" ></text>
+</g>
+<g >
+<title>v8::internal::ConcurrentMarkingVisitor::VisitPointers(v8::internal::HeapObject*, v8::internal::MaybeObject**, v8::internal::MaybeObject**) (2 samples, 1.61%)</title><rect x="809.4" y="1093" width="19.0" height="15.0" fill="rgb(244,153,13)" rx="2" ry="2" />
+<text  x="812.35" y="1103.5" ></text>
+</g>
+<g >
+<title>v8::internal::MarkCompactCollector::RootMarkingVisitor::VisitRootPointer(v8::internal::Root, char const*, v8::internal::Object**) (1 samples, 0.81%)</title><rect x="190.8" y="597" width="9.5" height="15.0" fill="rgb(240,17,4)" rx="2" ry="2" />
+<text  x="193.81" y="607.5" ></text>
+</g>
+<g >
+<title>v8::internal::Map::GetObjectCreateMap(v8::internal::Handle&lt;v8::internal::HeapObject&gt;) (1 samples, 0.81%)</title><rect x="67.1" y="677" width="9.5" height="15.0" fill="rgb(228,97,7)" rx="2" ry="2" />
+<text  x="70.10" y="687.5" ></text>
+</g>
+<g >
+<title>non-virtual thunk to v8::internal::PointersUpdatingVisitor::VisitRootPointer(v8::internal::Root, char const*, v8::internal::Object**) (1 samples, 0.81%)</title><rect x="162.3" y="565" width="9.5" height="15.0" fill="rgb(250,174,10)" rx="2" ry="2" />
+<text  x="165.26" y="575.5" ></text>
+</g>
+<g >
+<title>[unknown] (2 samples, 1.61%)</title><rect x="95.6" y="453" width="19.1" height="15.0" fill="rgb(236,198,2)" rx="2" ry="2" />
+<text  x="98.65" y="463.5" ></text>
+</g>
+<g >
+<title>v8::Function::Call(v8::Local&lt;v8::Context&gt;, v8::Local&lt;v8::Value&gt;, int, v8::Local&lt;v8::Value&gt;*) (40 samples, 32.26%)</title><rect x="29.0" y="917" width="380.7" height="15.0" fill="rgb(214,51,23)" rx="2" ry="2" />
+<text  x="32.03" y="927.5" >v8::Function::Call(v8::Local&lt;v8::Context&gt;, v8::Loca..</text>
+</g>
+<g >
+<title>v8::internal::Sweeper::RawSweep(v8::internal::Page*, v8::internal::Sweeper::FreeListRebuildingMode, v8::internal::FreeSpaceTreatmentMode) (22 samples, 17.74%)</title><rect x="980.6" y="1093" width="209.4" height="15.0" fill="rgb(210,198,24)" rx="2" ry="2" />
+<text  x="983.65" y="1103.5" >v8::internal::Sweeper::RawS..</text>
+</g>
+<g >
+<title>v8::internal::LoadIC::Load(v8::internal::Handle&lt;v8::internal::Object&gt;, v8::internal::Handle&lt;v8::internal::Name&gt;) (1 samples, 0.81%)</title><rect x="57.6" y="677" width="9.5" height="15.0" fill="rgb(249,121,12)" rx="2" ry="2" />
+<text  x="60.58" y="687.5" ></text>
+</g>
+<g >
+<title>bool v8::internal::MarkBit::Set&lt;(v8::internal::AccessMode)0&gt;() [clone .isra.205] (1 samples, 0.81%)</title><rect x="286.0" y="613" width="9.5" height="15.0" fill="rgb(207,87,19)" rx="2" ry="2" />
+<text  x="288.97" y="623.5" ></text>
+</g>
+<g >
+<title>v8::internal::LoadIC::UpdateCaches(v8::internal::LookupIterator*) (1 samples, 0.81%)</title><rect x="95.6" y="405" width="9.6" height="15.0" fill="rgb(248,154,50)" rx="2" ry="2" />
+<text  x="98.65" y="415.5" ></text>
+</g>
+<g >
+<title>v8::internal::StackFrameIterator::Advance() (2 samples, 1.61%)</title><rect x="114.7" y="341" width="19.0" height="15.0" fill="rgb(229,75,29)" rx="2" ry="2" />
+<text  x="117.68" y="351.5" ></text>
+</g>
+</g>
+</svg>

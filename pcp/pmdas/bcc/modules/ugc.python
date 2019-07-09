@@ -33,7 +33,7 @@ from cpmda import PMDA_FETCH_NOVALUES
 
 from modules.pcpbcc import PCPBCCBase
 
-from collections import namedtuple
+from collections import namedtuple, OrderedDict
 
 #
 # BPF program
@@ -46,7 +46,7 @@ bpf_src = "modules/ugc.bpf"
 MODULE = 'ugc'
 BASENS = 'proc.ugc.'
 units_count = pmUnits(0, 0, 1, 0, 0, PM_COUNT_ONE)
-units_nsecs = pmUnits(0, 1, 0, 0, PM_TIME_USEC, 0)
+units_usecs = pmUnits(0, 1, 0, 0, PM_TIME_USEC, 0)
 units_none = pmUnits(0, 0, 0, 0, 0, 0)
 
 #
@@ -59,7 +59,7 @@ class PCPBCCModule(PCPBCCBase):
         PCPBCCBase.__init__(self, MODULE, config, log, err)
 
         # XXX DBG
-        self.debug = True
+        self.debug = False
 
         self.pid = None
         self.proc_filter = None
@@ -138,10 +138,8 @@ class PCPBCCModule(PCPBCCBase):
         name = BASENS
         self.items = (
             # Name - reserved - type - semantics - units - help
-            (name + 'event', None, PM_TYPE_STRING, PM_SEM_INSTANT, units_none, 'gc event description'),
-            (name + 'duration', None, PM_TYPE_U64, PM_SEM_INSTANT, units_nsecs, 'duration of the'
-                                                                                'gc call'),
-            (name + 'language', None, PM_TYPE_STRING, PM_SEM_INSTANT, units_none, 'runtime language'),
+            (name + 'latency', None, PM_TYPE_U64, PM_SEM_COUNTER,
+             units_usecs, 'GC event distribution'),
         )
         return True, self.items
 
@@ -247,55 +245,57 @@ class PCPBCCModule(PCPBCCBase):
         # TODO See if we want to filter here too
         #if args.filter and args.filter not in description:
             #return
-        # TODO Exploiter les résultats
-        self.cache = PCPMetrics(event=description, duration=elapsed, lang="TODO") 
+        self.cache = PCPMetrics(event=description, duration=elapsed, lang=self.lang) 
         #print("%-8.3f %-8.2f %s" % (time.time() - start_ts, elapsed, description))
         #  self.log(str(self.cache))
         #  self.log("Handled gc event")
 
     def refresh(self):
         """ Refresh BPF data """
-        self.log("refresh: cache: "+str(self.cache))
-        self.log("refresh: insts: "+str(self.insts))
-
         if self.bpf is None:
             return None
 
-        # TODO Understand what the purpose of refresh is and if
-        # anything is required
-        #def get_key(s):
-        #    """ Helper to read key for dict """
-        #    return self.parse_inst_name(s.clazz.decode("ASCII", "replace") + "." + \
-        #                                s.method.decode("ASCII", "replace"))
+        dist = self.bpf["dist"]
+        self.insts = self.read_log2_histogram(dist, self.cache)
+        self.log("self.insts " + str(self.insts))
+        self.log("cache " + str(self.cache))
+        dist.clear()
 
-        #for k, v in self.bpf["counts"].items():
-        #    key = get_key(k)
-        #    self.cache[key] = v.value
-        #    self.insts[key] = c_int(1)
+        # return self.insts
 
-        self.insts = {"test"+str(i) : ct.c_int(1) for i in range(10)}
-        self.log("refresh: insts: "+str(self.insts))
+        it = self.insts.items()
+        self.log("TEST " + str(type(it)))
+        od = OrderedDict(map(lambda l: (l[0], c_int(0)), 
+              it
+           ))
+        self.log("==== TEST od "+ str(od))
+        self.log("==== TEST insts "+ str(self.insts))
+        # return od
 
         return self.insts
 
     def bpfdata(self, item, inst):
         """ Return BPF data as PCP metric value """
         try:
-            #self.log("bpfdata: cache: "+str(self.cache))
-            #self.log("bpfdata: item: "+str(item))
-            #self.log("bpfdata: inst: "+str(inst))
-            # TODO Understand pmdaIndom
-            #key = self.pmdaIndom.inst_name_lookup(inst)
-            if item == 0:
-                return [self.cache.event, 1]
-            elif item == 1:
-                return [self.cache.duration, 1]
-            elif item == 2:
-                return [self.cache.lang, 1]
-            else:
-                return [PM_ERR_PMID, 0]
-        except Exception: # pylint: disable=broad-except
+            self.log("XXX type data->inst " + str(type(inst)))
+            self.log("XXX data->inst " + str(inst))
+            new_inst = inst+9
+            key = self.pmdaIndom.inst_name_lookup(new_inst)
+            self.log("keycache" + str(self.cache))
+            self.log("keycache[key]" + str(self.cache[key]))
+            return [self.cache[key], 1]
+        except Exception:
             return [PMDA_FETCH_NOVALUES, 0]
+
+    def label_indom(self):
+        """ Instance domain labels """
+        return '{"statistic":"histogram"}'
+
+    def label_instance(self, inst):
+        """ Instance labels """
+        key = self.pmdaIndom.inst_name_lookup(inst)
+        bounds = key.split("-")
+        return '{"lower_bound":%s,"upper_bound":%s}' % (bounds[0], bounds[1])
 
 
 class Probe(object):
@@ -313,9 +313,6 @@ class Probe(object):
         text = """
 int trace_%s(struct pt_regs *ctx) {
 
-// TODO Remove this
-bpf_trace_printk("Trace 1\\n");
-
     u64 pid = bpf_get_current_pid_tgid();
     struct entry_t e = {};
     e.start_ns = bpf_ktime_get_ns();
@@ -324,9 +321,6 @@ bpf_trace_printk("Trace 1\\n");
     return 0;
 }
 int trace_%s(struct pt_regs *ctx) {
-
-// TODO Remove this
-bpf_trace_printk("Trace 2\\n");
 
     u64 elapsed;
     struct entry_t *e;
@@ -342,9 +336,10 @@ bpf_trace_printk("Trace 2\\n");
     }
     event.elapsed_ns = elapsed;
     %s
-    gcs.perf_submit(ctx, &event, sizeof(event));
-
-bpf_trace_printk("Trace 2bis\\n");
+    // TODO Enable this to get more detailed log
+    //gcs.perf_submit(ctx, &event, sizeof(event));
+    // TODO dist.increment(elapsed/1000);
+    dist.increment(bpf_log2l(elapsed/1000));
 
     return 0;
 }
@@ -363,7 +358,7 @@ bpf_trace_printk("Trace 2bis\\n");
 # Language specific BCC code for GC
 GCSpecificBCC = namedtuple('GCSpecificBCC', ['begin_save', 'end_save'])
 
-# Hold metrics to be given to PCP
+# Hold metrics to be given to PCP, if we want details
 PCPMetrics = namedtuple('PCPMetrics',
                         ['event', 'duration', 'lang'])
 
