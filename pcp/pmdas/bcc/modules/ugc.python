@@ -338,6 +338,7 @@ int trace_%s(struct pt_regs *ctx) {
     %s
     // TODO Enable this to get more detailed log
     //gcs.perf_submit(ctx, &event, sizeof(event));
+    // TODO dist.increment(elapsed/1000);
     dist.increment(bpf_log2l(elapsed/1000));
 
     return 0;
