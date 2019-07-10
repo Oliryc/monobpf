@@ -86,7 +86,11 @@ func main() {
 		tcp, _ := tcpLayer.(*layers.TCP)
 		for header_list.Next() {
 			key, leaf := header_list.Key(), header_list.Leaf()
-			leaf_val, _ := headers.LeafBytesToStr(leaf)
+			leaf_val, err := headers.LeafBytesToStr(leaf)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Failed to convert to str", err)
+				os.Exit(1)
+			}
 			if fmt.Sprint(tcp.Seq) == leaf_val {
 				applicationLayer := packet.ApplicationLayer()
 				if applicationLayer != nil {
