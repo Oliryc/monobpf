@@ -25,7 +25,7 @@ import (
 
 var (
 	device            = "lo"
-	snapshotLen int32 = 1024
+	snapshotLen int32 = 10240
 	promiscuous       = false
 	_           error
 	timeout     = 30 * time.Second
@@ -83,6 +83,9 @@ func main() {
 	packetSource := gopacket.NewPacketSource(handle, handle.LinkType())
 	for packet := range packetSource.Packets() {
 		tcpLayer := packet.Layer(layers.LayerTypeTCP)
+		if tcpLayer == nil{
+                    continue
+		}
 		tcp, _ := tcpLayer.(*layers.TCP)
 		for header_list.Next() {
 			key, leaf := header_list.Key(), header_list.Leaf()
@@ -91,6 +94,7 @@ func main() {
 				fmt.Fprintf(os.Stderr, "Failed to convert to str", err)
 				os.Exit(1)
 			}
+			fmt.Fprintf(os.Stdout, "seq: ", fmt.Sprint(tcp.Seq), ", leaf_val: ", leaf_val, "\n")
 			if fmt.Sprint(tcp.Seq) == leaf_val {
 				applicationLayer := packet.ApplicationLayer()
 				if applicationLayer != nil {

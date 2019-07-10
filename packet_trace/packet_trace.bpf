@@ -50,6 +50,7 @@ int xdp_prog1(struct CTXTYPE *ctx) {
         return XDP_PASS;
     }
     if (ip_hdr->tot_len > 80){
+        bpf_trace_printk("Adding a packet to the list: %u\n", tcp_hdr->seq);
         *head_value = tcp_hdr->seq;
         *hs_value+=1;
     }
