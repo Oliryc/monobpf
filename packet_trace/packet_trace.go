@@ -11,16 +11,17 @@ import "C"
 
 import (
 	"fmt"
-	"github.com/google/gopacket"
-	"github.com/google/gopacket/layers"
-	"github.com/google/gopacket/pcap"
-	bpf "github.com/iovisor/gobpf/bcc"
 	"io/ioutil"
 	"log"
 	"os"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/google/gopacket"
+	"github.com/google/gopacket/layers"
+	"github.com/google/gopacket/pcap"
+	bpf "github.com/iovisor/gobpf/bcc"
 )
 
 var (
