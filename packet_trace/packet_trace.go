@@ -83,8 +83,8 @@ func main() {
 	packetSource := gopacket.NewPacketSource(handle, handle.LinkType())
 	for packet := range packetSource.Packets() {
 		tcpLayer := packet.Layer(layers.LayerTypeTCP)
-		if tcpLayer == nil{
-                    continue
+		if tcpLayer == nil {
+			continue
 		}
 		tcp, _ := tcpLayer.(*layers.TCP)
 		for header_list.Next() {
@@ -94,8 +94,13 @@ func main() {
 				fmt.Fprintf(os.Stderr, "Failed to convert to str", err)
 				os.Exit(1)
 			}
-			fmt.Fprintf(os.Stdout, "seq: ", fmt.Sprint(tcp.Seq), ", leaf_val: ", leaf_val, "\n")
-			if fmt.Sprint(tcp.Seq) == leaf_val {
+			leaf_int, err := strconv.ParseUint(leaf_val, 16, 32)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Failed to convert to int", err)
+				os.Exit(1)
+			}
+			fmt.Fprintf(os.Stdout, "seq: ", tcp.Seq, ", leaf_val: ", leaf_int, "\n")
+			if uint32(leaf_int) == tcp.Seq {
 				applicationLayer := packet.ApplicationLayer()
 				if applicationLayer != nil {
 					fmt.Println("Application layer/Payload found.")
