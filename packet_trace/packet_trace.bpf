@@ -12,6 +12,7 @@ BPF_ARRAY(headers,u64,256);
 BPF_ARRAY(head_size,u64,1);
 
 int xdp_prog1(struct CTXTYPE *ctx) {
+    bpf_trace_printk("Hi!\n");
 
     void* data_end = (void*)(long)ctx->data_end;
     void* data = (void*)(long)ctx->data;

@@ -89,7 +89,7 @@ func main() {
 			key, leaf := header_list.Key(), header_list.Leaf()
 			leaf_val, err := headers.LeafBytesToStr(leaf)
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "Failed to convert to str", err)
+				fmt.Fprintf(os.Stderr, "Failed to convert leaf_val to str: %v", err)
 				os.Exit(1)
 			}
 			if fmt.Sprint(tcp.Seq) == leaf_val {
