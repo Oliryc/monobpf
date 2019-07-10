@@ -1,0 +1,36 @@
+#define KBUILD_MODNAME "foo"
+#include <uapi/linux/bpf.h>
+#include <linux/in.h>
+#include <linux/if_ether.h>
+#include <linux/if_packet.h>
+#include <linux/if_vlan.h>
+#include <linux/ip.h>
+#include <linux/ipv6.h>
+
+BPF_ARRAY("headers",u64,256);
+//This should be optimized better probably
+BPF_ARRAY("head_size",u64,1)
+
+int xdp_prog1(struct CTXTYPE *ctx) {
+
+    void* data_end = (void*)(long)ctx->data_end;
+    void* data = (void*)(long)ctx->data;
+
+    struct ethhdr *eth = data;
+    struct iphdr* ip_hdr;
+    struct tcphdr tcphdr;
+
+    // drop packets
+    int rc = XDP_PASS; // let pass XDP_PASS or redirect to tx via XDP_TX
+    ip_hdr = (struct iphdr *)(eth_hdr + 1);
+    tcp_hdr = (struct tcphdr*)((u8 *)ip_hdr + ip_hdr->ihl * 4);
+    if ip_hdr->tot_len > 80:
+        headers[head_size[0]] = tcp_hdr->seq
+        head_size[0]+=1
+    if head_size[0] > 255{
+        bpf_trace_printk("Error Head Size exceeded array size. Data was lost!\n");
+        head_size[0] = 0
+    }
+
+    return rc;
+}

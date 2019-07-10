@@ -3,5 +3,5 @@ global:
 scrape_configs:
   - job_name: "eBPF"
     static_configs:
-    - targets:
-      - "localhost:9435"
+      - targets:
+          - "localhost:9435"
