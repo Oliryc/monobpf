@@ -40,7 +40,7 @@ func main() {
 	}
 	source := string(filesrc)
 
-	ret := "XDP_DROP"
+	ret := "XDP_PASS"
 	ctxtype := "xdp_md"
 
 	module := bpf.NewModule(source, []string{
