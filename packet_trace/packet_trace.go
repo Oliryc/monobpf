@@ -94,7 +94,7 @@ func main() {
 				fmt.Fprintf(os.Stderr, "Failed to convert to str", err)
 				os.Exit(1)
 			}
-			leaf_int, err := strconv.ParseUint(leaf_val, 16, 32)
+			leaf_int, err := strconv.ParseUint(leaf_val, 0, 32)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "Failed to convert to int", err)
 				os.Exit(1)
