@@ -27,8 +27,7 @@ var (
 	device            = "lo"
 	snapshotLen int32 = 10240
 	promiscuous       = false
-	err         error
-	timeout     = -1 * time.Second
+	timeout           = -1 * time.Second
 	handle      *pcap.Handle
 )
 
@@ -65,13 +64,12 @@ func main() {
 	defer func() {
 		if err := module.RemoveXDP(device); err != nil {
 			fmt.Fprintf(os.Stderr, "Failed to remove XDP from %s: %v\n", device, err)
+			os.Exit(1)
 		}
 	}()
 
 	headers := bpf.NewTable(module.TableId("headers"), module)
-	header_list := headers.Iter()
 	head_size := bpf.NewTable(module.TableId("head_size"), module)
-	hs_list := head_size.Iter()
 
 	// Open device
 	handle, err = pcap.OpenLive(device, snapshotLen, promiscuous, timeout)
@@ -82,6 +80,8 @@ func main() {
 
 	packetSource := gopacket.NewPacketSource(handle, handle.LinkType())
 	for packet := range packetSource.Packets() {
+		header_list := headers.Iter()
+		hs_list := head_size.Iter()
 		tcpLayer := packet.Layer(layers.LayerTypeTCP)
 		if tcpLayer == nil {
 			continue
@@ -117,7 +117,11 @@ func main() {
 					fmt.Println("Error decoding some part of the packet:", err)
 				}
 				new_leaf, _ := headers.LeafStrToBytes("0")
-				headers.Set(key, new_leaf)
+				err = headers.Set(key, new_leaf)
+				if err != nil {
+					fmt.Fprint(os.Stderr, "Failed to update leaf", err)
+					os.Exit(1)
+				}
 				// Should only be one
 				for hs_list.Next() {
 					key, leaf := hs_list.Key(), hs_list.Leaf()
@@ -125,7 +129,8 @@ func main() {
 					leaf_int, _ := strconv.Atoi(leaf_str)
 					leaf_int = leaf_int - 1
 					new_leaf, _ := headers.LeafStrToBytes(fmt.Sprint(leaf_int))
-					head_size.Set(key, new_leaf)
+					err = head_size.Set(key, new_leaf)
+					fmt.Fprint(os.Stderr, "Failed to update leaf", err)
 				}
 			}
 		}
