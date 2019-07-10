@@ -2,7 +2,7 @@
 
 monitoring tools
 
-Cf [ebpf.md](./ebpf.md) for background & notes about eBPF (*outdated, most recent version on overleaf*)
+~~Cf [ebpf.md](./ebpf.md) for background & notes about eBPF~~ (outdated, most recent version on overleaf)
 
 *****************************************
 
