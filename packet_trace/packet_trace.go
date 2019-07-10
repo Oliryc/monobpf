@@ -27,8 +27,8 @@ var (
 	device            = "lo"
 	snapshotLen int32 = 10240
 	promiscuous       = false
-	_           error
-	timeout     = 30 * time.Second
+	err         error
+	timeout     = -1 * time.Second
 	handle      *pcap.Handle
 )
 
