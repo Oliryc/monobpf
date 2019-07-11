@@ -62,6 +62,7 @@ func main() {
 		fmt.Fprintf(os.Stderr, "Failed to attach xdp prog: %v\n", err)
 		os.Exit(1)
 	}
+	fmt.Printf("Attached BPF programm to '%v'\n", device)
 
 	defer func() {
 		if err := module.RemoveXDP(device); err != nil {
@@ -83,6 +84,7 @@ func main() {
 
 	packetSource := gopacket.NewPacketSource(handle, handle.LinkType())
 	for packet := range packetSource.Packets() {
+		fmt.Println("Packet!")
 		tcpLayer := packet.Layer(layers.LayerTypeTCP)
 		tcp, _ := tcpLayer.(*layers.TCP)
 		for header_list.Next() {
