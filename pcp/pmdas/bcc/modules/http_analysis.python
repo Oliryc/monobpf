@@ -26,6 +26,7 @@ from functools import reduce
 from threading import Lock, Thread
 import time
 import socket
+import ipaddress
 from socket import inet_ntop, AF_INET, AF_INET6
 from struct import pack
 from os import path, read
@@ -62,12 +63,20 @@ units_none = pmUnits(0, 0, 0, 0, 0, 0)
 # HTTP Metadata to be logged in PCP (some field may be empty)
 HttpMetaRequest = namedtuple('HttpMetaRequest', 
                       [
+                          'src_port',
+                          'dst_port',
+                          'src_ip',
+                          'dst_ip',
                           'method', # GET, POST…
                           'path', # /path?key1=val1&key2=val2
                           'headers', # List containing the headers with value
                        ])
 HttpMetaResponse = namedtuple('HttpMetaResponse', 
                       [
+                          'src_port',
+                          'dst_port',
+                          'src_ip',
+                          'dst_ip',
                           'code', # 404, 200…
                           'txt', # Not found…
                           'headers', # List containing the headers with value
@@ -75,7 +84,11 @@ HttpMetaResponse = namedtuple('HttpMetaResponse',
 # For incorrect HTTP
 HttpMetaIncorrect = namedtuple('HttpMetaIncorrect', 
                       [
-                          'line', # Line analysed that resulted in the classification as incorrect
+                          'src_port',
+                          'dst_port',
+                          'src_ip',
+                          'dst_ip',
+                          'line', # Line analysed that resulted in being classified as incorrect
                        ])
 
 CLEANUP_N_PACKETS  = 50       #run cleanup every CLEANUP_N_PACKETS packets received
@@ -255,6 +268,11 @@ class PCPBCCModule(PCPBCCBase):
           port_src = int(self.toHex(port_src_str),16)
           port_dst = int(self.toHex(port_dst_str),16)
 
+          # Gather some of the TCP stream features
+          tcp_ip_features = {'src_port': port_src, 'dst_port': port_dst,
+                             'src_ip': str(ipaddress.ip_address(ip_src)),
+                             'dst_ip': str(ipaddress.ip_address(ip_dst))}
+
           #calculate payload offset
           payload_offset = ETH_HLEN + ip_header_length + tcp_header_length
 
@@ -276,7 +294,7 @@ class PCPBCCModule(PCPBCCBase):
               #url entirely contained in first packet -> print it all
               substring = self.substringUntilCRLF(payload_string)
               self.log("****"+substring) # TODO Add to cache
-              self.store_in_cache(substring)
+              self.store_in_cache(substring, tcp_ip_features)
 
               #delete current_Key from bpf_sessions, url already printed. current session not useful anymore
               try:
@@ -306,7 +324,7 @@ class PCPBCCModule(PCPBCCBase):
                   #print HTTP GET/POST url
                   substring = self.substringUntilCRLF(payload_string)
                   self.log("***//*"+substring) # TODO Remove this
-                  store_in_cache(substring)
+                  store_in_cache(substring, tcp_ip_features)
                   #clean bpf_sessions & local_dictionary
                   try:
                     del self.bpf_sessions[current_Key]
@@ -341,12 +359,12 @@ class PCPBCCModule(PCPBCCBase):
             self.cleanup()
             self.log("Cleaned")
 
-    def store_in_cache(self, http_line, headers=''):
+    def store_in_cache(self, http_line, tcp_ip_features, headers=''):
         """ Extract data from an HTTP line like 'GET /index HTTP/1.1'
             or 'HTTP/1.1 404 Not Found'
         """
         # TODO Add headers
-        httpMeta = HttpMetaIncorrect(line=http_line)
+        httpMeta = HttpMetaIncorrect(**tcp_ip_features, line=http_line)
         m = self.http_req_ans.match(http_line)
         if m is None:
             pass
@@ -355,12 +373,14 @@ class PCPBCCModule(PCPBCCBase):
                 code=int(m['code']),
                 txt=m['txt'],
                 headers=headers,
+                **tcp_ip_features,
             )
         elif (m['http_request']):
             httpMeta = HttpMetaRequest(
                 method=m['method'],
                 path=m['path'],
                 headers=headers,
+                **tcp_ip_features,
             )
 
         # TODO Remove this
