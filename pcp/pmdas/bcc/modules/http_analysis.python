@@ -384,10 +384,10 @@ class PCPBCCModule(PCPBCCBase):
             )
 
         # TODO Remove this
-        self.log("============= httpMeta "+str(httpMeta))
+        #  self.log("============= httpMeta "+str(httpMeta))
 
         self.lock.acquire()
-        self.cache.appendleft([httpMeta])
+        self.cache.appendleft(httpMeta)
         self.lock.release()
 
     # pylint: disable=bad-continuation
@@ -397,12 +397,12 @@ class PCPBCCModule(PCPBCCBase):
         self.items = (
             # Name - reserved - type - semantics - units - help
             (name + 'http-method', None, PM_TYPE_STRING, PM_SEM_INSTANT, units_none, 'method'),
-            (name + 'path', None, PM_TYPE_STRING, PM_SEM_INSTANT, units_none, 'path'),
-            (name + 'laddr', None, PM_TYPE_STRING, PM_SEM_INSTANT, units_none, 'local address'),
-            (name + 'lport', None, PM_TYPE_U32, PM_SEM_INSTANT, units_none, 'local port'),
-            (name + 'daddr', None, PM_TYPE_STRING, PM_SEM_INSTANT, units_none, 'destination '
-                                                                               'address'),
-            (name + 'dport', None, PM_TYPE_U32, PM_SEM_INSTANT, units_none, 'destination port'),
+            #  (name + 'path', None, PM_TYPE_STRING, PM_SEM_INSTANT, units_none, 'path'),
+            #  (name + 'laddr', None, PM_TYPE_STRING, PM_SEM_INSTANT, units_none, 'local address'),
+            #  (name + 'lport', None, PM_TYPE_U32, PM_SEM_INSTANT, units_none, 'local port'),
+            #  (name + 'daddr', None, PM_TYPE_STRING, PM_SEM_INSTANT, units_none, 'destination '
+                                                                               #  'address'),
+            #  (name + 'dport', None, PM_TYPE_U32, PM_SEM_INSTANT, units_none, 'destination port'),
         )
         return True, self.items
 
@@ -446,10 +446,14 @@ class PCPBCCModule(PCPBCCBase):
         """ Return BPF data as PCP metric value """
         try:
             key = int(self.pmdaIndom.inst_name_lookup(inst))
+            #  self.log("self.cache "+str(key)+" "+str(item))
+            self.log("self.cache "+str(key)+" "+str(item))
+            #  self.log("self.cache "+str(self.cache))
             self.lock.acquire()
-            value = self.cache[key][item]
+            value = self.cache[key]
+            #  value = self.cache[key].method or self.cache[key].code
             self.lock.release()
-            return [value, 1]
+            return [str(value), 1]
         except Exception: # pylint: disable=broad-except
             self.lock.release()
             return [PMDA_FETCH_NOVALUES, 0]
