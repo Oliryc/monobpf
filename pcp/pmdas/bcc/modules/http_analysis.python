@@ -16,16 +16,19 @@
 # MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 # GNU General Public License for more details.
 #
-""" PCP BCC PMDA httpverb module """
+""" PCP BCC PMDA http_analysis module """
 
 # pylint: disable=invalid-name, too-few-public-methods, too-many-instance-attributes
 
 import ctypes as ct
 from collections import deque, namedtuple
+from functools import reduce
 from threading import Lock, Thread
+import time
+import socket
 from socket import inet_ntop, AF_INET, AF_INET6
 from struct import pack
-from os import path
+from os import path, read
 
 from bcc import BPF
 
@@ -36,16 +39,19 @@ from cpmda import PMDA_FETCH_NOVALUES
 
 from modules.pcpbcc import PCPBCCBase
 
+# TODO:
+# - IPv6 support?
+
 #
 # BPF program
 #
-bpf_src = "modules/httpverb.bpf"
+bpf_src = "modules/http_analysis.bpf"
 # Compat with kernel < 4.16, bcc < 0.6
 
 #
 # PCP BCC PMDA constants
 #
-MODULE = 'httpverb'
+MODULE = 'http_analysis'
 BASENS = 'proc.io.net.http.'
 units_bytes = pmUnits(1, 0, 0, PM_SPACE_BYTE, 0, 0)
 units_usecs = pmUnits(0, 1, 0, 0, PM_TIME_USEC, 0)
@@ -64,34 +70,6 @@ MAX_URL_STRING_LEN = 8192     #max url string len (usually 8K)
 MAX_AGE_SECONDS    = 30       #max age entry in bpf_sessions map
 
 
-class Data_ipv4(ct.Structure):
-    """ IPv4 data struct """
-    _fields_ = [
-        ("ts_us", ct.c_ulonglong),
-        ("pid", ct.c_ulonglong),
-        ("saddr", ct.c_ulonglong),
-        ("daddr", ct.c_ulonglong),
-        ("ports", ct.c_ulonglong),
-        ("rx_b", ct.c_ulonglong),
-        ("tx_b", ct.c_ulonglong),
-        ("span_us", ct.c_ulonglong),
-        ("task", ct.c_char * TASK_COMM_LEN)
-    ]
-
-class Data_ipv6(ct.Structure):
-    """ IPv6 data struct """
-    _fields_ = [
-        ("ts_us", ct.c_ulonglong),
-        ("pid", ct.c_ulonglong),
-        ("saddr", (ct.c_ulonglong * 2)),
-        ("daddr", (ct.c_ulonglong * 2)),
-        ("ports", ct.c_ulonglong),
-        ("rx_b", ct.c_ulonglong),
-        ("tx_b", ct.c_ulonglong),
-        ("span_us", ct.c_ulonglong),
-        ("task", ct.c_char * TASK_COMM_LEN)
-    ]
-
 #
 # PCP BCC Module
 #
@@ -103,6 +81,7 @@ class PCPBCCModule(PCPBCCBase):
 
         self.proc_refresh = proc_refresh
 
+        self.interface = None
         self.dports = []
         self.lports = []
         self.session_count = 20
@@ -118,8 +97,11 @@ class PCPBCCModule(PCPBCCBase):
                 self.lports = [int(port) for port in self.config.get(MODULE, opt).split(",")]
                 self.log("Filtering on local ports: %s." % str(self.lports))
             if opt == 'interface': # Interface for the capture
-                self.interface = opt
+                self.interface = self.config.get(MODULE, opt)
                 self.log("Binding socket to: %s." % str(self.interface))
+
+        if not self.interface:
+            raise RuntimeError("interface is mandatory")
 
         self.cache = deque(maxlen=self.session_count)
         self.insts = {str(i) : ct.c_int(1) for i in range(self.session_count)}
@@ -134,7 +116,10 @@ class PCPBCCModule(PCPBCCBase):
     def toHex(self, s):
         lst = []
         for ch in s:
-            hv = hex(ord(ch)).replace('0x', '')
+            if type(ch) is int:
+                hv = hex(ch).replace('0x', '')
+            else:
+                hv = hex(ord(ch)).replace('0x', '')
             if len(hv) == 1:
                 hv = '0'+hv
             lst.append(hv)
@@ -157,21 +142,21 @@ class PCPBCCModule(PCPBCCBase):
         #looking for leaf having:
         #timestap  == 0        --> update with current timestamp
         #AGE > MAX_AGE_SECONDS --> delete item
-        for key,leaf in bpf_sessions.items():
+        for key,leaf in self.bpf_sessions.items():
           try:
-            current_leaf = bpf_sessions[key]
+            current_leaf = self.bpf_sessions[key]
             #set timestamp if timestamp == 0
             if (current_leaf.timestamp == 0):
-              bpf_sessions[key] = bpf_sessions.Leaf(current_time)
+              self.bpf_sessions[key] = self.bpf_sessions.Leaf(current_time)
             else:
               #delete older entries
               if (current_time - current_leaf.timestamp > MAX_AGE_SECONDS):
-                del bpf_sessions[key]
+                del self.bpf_sessions[key]
           except:
             print("cleanup exception.")
         return
 
-    def handle_http_packet_event(self, data):
+    def http_packet_poller(self):
         """ IP event handler """
         packet_count = 0
 
@@ -182,11 +167,11 @@ class PCPBCCModule(PCPBCCBase):
 
         while 1:
           #retrieve raw packet from socket
-          packet_str = os.read(socket_fd,4096) #set packet length to max packet length on the interface
+          packet_str = read(self.socket_fd,4096) #set packet length to max packet length on the interface
           packet_count += 1
 
           #DEBUG - print raw packet in hex format
-          #packet_hex = toHex(packet_str)
+          #packet_hex = self.toHex(packet_str)
           #print ("%s" % packet_hex)
 
           #convert packet into bytearray
@@ -223,8 +208,9 @@ class PCPBCCModule(PCPBCCBase):
           ip_src_str = packet_str[ETH_HLEN+12:ETH_HLEN+16]                #ip source offset 12..15
           ip_dst_str = packet_str[ETH_HLEN+16:ETH_HLEN+20]                #ip dest   offset 16..19
 
-          ip_src = int(toHex(ip_src_str),16)
-          ip_dst = int(toHex(ip_dst_str),16)
+
+          ip_src = int(self.toHex(ip_src_str),16)
+          ip_dst = int(self.toHex(ip_dst_str),16)
 
           #TCP HEADER
           #https://www.rfc-editor.org/rfc/rfc793.txt
@@ -250,21 +236,21 @@ class PCPBCCModule(PCPBCCBase):
           port_src_str = packet_str[ETH_HLEN+ip_header_length:ETH_HLEN+ip_header_length+2]
           port_dst_str = packet_str[ETH_HLEN+ip_header_length+2:ETH_HLEN+ip_header_length+4]
 
-          port_src = int(toHex(port_src_str),16)
-          port_dst = int(toHex(port_dst_str),16)
+          port_src = int(self.toHex(port_src_str),16)
+          port_dst = int(self.toHex(port_dst_str),16)
 
           #calculate payload offset
           payload_offset = ETH_HLEN + ip_header_length + tcp_header_length
 
           #payload_string contains only packet payload
-          payload_string = packet_str[(payload_offset):(len(packet_bytearray))]
+          payload_string = packet_str[(payload_offset):(len(packet_bytearray))].decode()
 
           #CR + LF (substring to find)
           crlf = "\r\n"
 
           #current_Key contains ip source/dest and port source/map
           #useful for direct bpf_sessions map access
-          current_Key = bpf_sessions.Key(ip_src,ip_dst,port_src,port_dst)
+          current_Key = self.bpf_sessions.Key(ip_src,ip_dst,port_src,port_dst)
 
           #looking for HTTP GET/POST request
           if ((payload_string[:3] == "GET") or (payload_string[:4] == "POST")   or (payload_string[:4] == "HTTP")  \
@@ -272,11 +258,12 @@ class PCPBCCModule(PCPBCCBase):
             #match: HTTP GET/POST packet found
             if (crlf in payload_string):
               #url entirely contained in first packet -> print it all
-              printUntilCRLF(payload_string)
+              substring = self.substringUntilCRLF(payload_string)
+              self.log("****"+substring)
 
               #delete current_Key from bpf_sessions, url already printed. current session not useful anymore
               try:
-                del bpf_sessions[current_Key]
+                del self.bpf_sessions[current_Key]
               except:
                 print ("error during delete from bpf map ")
             else:
@@ -288,7 +275,7 @@ class PCPBCCModule(PCPBCCBase):
             #NO match: HTTP GET/POST  NOT found
 
             #check if the packet belong to a session saved in bpf_sessions
-            if (current_Key in bpf_sessions):
+            if (current_Key in self.bpf_sessions):
               #check id the packet belong to a session saved in local_dictionary
               #(local_dictionary mantains HTTP GET/POST url not printed yet because splitted in N packets)
               if (binascii.hexlify(current_Key) in local_dictionary):
@@ -300,10 +287,11 @@ class PCPBCCModule(PCPBCCBase):
                   #append current payload
                   prev_payload_string += payload_string
                   #print HTTP GET/POST url
-                  printUntilCRLF(prev_payload_string)
+                  substring = self.substringUntilCRLF(payload_string)
+                  self.log("***//*"+substring)
                   #clean bpf_sessions & local_dictionary
                   try:
-                    del bpf_sessions[current_Key]
+                    del self.bpf_sessions[current_Key]
                     del local_dictionary[binascii.hexlify(current_Key)]
                   except:
                     print ("error deleting from map or dictionary")
@@ -315,7 +303,7 @@ class PCPBCCModule(PCPBCCBase):
                   if (len(prev_payload_string) > MAX_URL_STRING_LEN):
                     print("url too long")
                     try:
-                      del bpf_sessions[current_Key]
+                      del self.bpf_sessions[current_Key]
                       del local_dictionary[binascii.hexlify(current_Key)]
                     except:
                       print ("error deleting from map or dict")
@@ -325,13 +313,15 @@ class PCPBCCModule(PCPBCCBase):
                 #first part of the HTTP GET/POST url is NOT present in local dictionary
                 #bpf_sessions contains invalid entry -> delete it
                 try:
-                  del bpf_sessions[current_Key]
+                  del self.bpf_sessions[current_Key]
                 except:
                   print ("error del bpf_session")
 
           #check if dirty entry are present in bpf_sessions
           if (((packet_count) % CLEANUP_N_PACKETS) == 0):
-            cleanup()
+            self.log("Cleaning…")
+            self.cleanup()
+            self.log("Cleaned")
 
         self.lock.acquire()
         self.cache.appendleft(HttpMeta(verb)) # TODO Finish to add things
@@ -343,17 +333,13 @@ class PCPBCCModule(PCPBCCBase):
         name = BASENS
         self.items = (
             # Name - reserved - type - semantics - units - help
-            (name + 'pid', None, PM_TYPE_U32, PM_SEM_INSTANT, units_none, 'PID'),
-            (name + 'comm', None, PM_TYPE_STRING, PM_SEM_INSTANT, units_none, 'command'),
+            (name + 'http-method', None, PM_TYPE_STRING, PM_SEM_INSTANT, units_none, 'method'),
+            (name + 'path', None, PM_TYPE_STRING, PM_SEM_INSTANT, units_none, 'path'),
             (name + 'laddr', None, PM_TYPE_STRING, PM_SEM_INSTANT, units_none, 'local address'),
             (name + 'lport', None, PM_TYPE_U32, PM_SEM_INSTANT, units_none, 'local port'),
             (name + 'daddr', None, PM_TYPE_STRING, PM_SEM_INSTANT, units_none, 'destination '
                                                                                'address'),
             (name + 'dport', None, PM_TYPE_U32, PM_SEM_INSTANT, units_none, 'destination port'),
-            (name + 'tx', None, PM_TYPE_U64, PM_SEM_INSTANT, units_bytes, 'transmitted data'),
-            (name + 'rx', None, PM_TYPE_U64, PM_SEM_INSTANT, units_bytes, 'received data'),
-            (name + 'duration', None, PM_TYPE_U32, PM_SEM_INSTANT, units_usecs, 'duration of '
-                'the TCP session (from TCP_ESTABLISHED/TCP_SYN_* until TCP_CLOSE)'),
         )
         return True, self.items
 
@@ -364,19 +350,19 @@ class PCPBCCModule(PCPBCCBase):
             #load eBPF program http_filter of type SOCKET_FILTER into the kernel eBPF vm
             #more info about eBPF program types
             #http://man7.org/linux/man-pages/man2/bpf.2.html
-            function_http_filter = bpf.load_func("http_filter", BPF.SOCKET_FILTER)
+            function_http_filter = self.bpf.load_func("http_filter", BPF.SOCKET_FILTER)
             #create raw socket, bind it to interface
             #attach bpf program to socket created
-            BPF.attach_raw_socket(function_http_filter, interface)
+            BPF.attach_raw_socket(function_http_filter, self.interface)
             #get file descriptor of the socket previously created inside BPF.attach_raw_socket
             self.socket_fd = function_http_filter.sock
             #create python socket object, from the file descriptor
-            sock = socket.fromfd(socket_fd,socket.PF_PACKET,socket.SOCK_RAW,socket.IPPROTO_IP)
+            sock = socket.fromfd(self.socket_fd, socket.PF_PACKET, socket.SOCK_RAW, socket.IPPROTO_IP)
             #set it as blocking socket
             sock.setblocking(True)
-            self.bpf_sessions = bpf.get_table("sessions")
+            self.bpf_sessions = self.bpf.get_table("sessions")
 
-            self.thread = Thread(name="socketpoller", target=self.perf_buffer_poller)
+            self.thread = Thread(name="socketpoller", target=self.http_packet_poller)
             self.thread.setDaemon(True)
             self.thread.start()
             self.log("Compiled.")
