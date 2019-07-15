@@ -10,6 +10,8 @@ void perf_reader_free(void *ptr);
 import "C"
 
 import (
+	"bytes"
+	"encoding/binary"
 	"fmt"
 	"github.com/google/gopacket"
 	"github.com/google/gopacket/layers"
@@ -18,6 +20,7 @@ import (
 	"io/ioutil"
 	"log"
 	"os"
+	"os/signal"
 	"strconv"
 	"strings"
 	"time"
@@ -29,7 +32,7 @@ var (
 	promiscuous       = false
 	timeout           = -1 * time.Second
 	handle      *pcap.Handle
-	use_one     = true
+	use_one     = false
 )
 
 func main() {
@@ -38,6 +41,14 @@ func main() {
 	} else {
 		packetTrace2()
 	}
+}
+
+type chownEvent struct {
+	SeqNum      uint64
+	SrcIP       uint32
+	DstIP       uint32
+	ReturnValue int32
+	Filename    [256]byte
 }
 
 func packetTrace1() {
@@ -162,11 +173,40 @@ func packetTrace2() {
 		fmt.Fprintf(os.Stderr, "Failed to attach xdp prog: %v\n", err)
 		os.Exit(1)
 	}
+	table := bpf.NewTable(module.TableId("chown_events"), module)
+
+	channel := make(chan []byte)
+
+	perfMap, err := bpf.InitPerfMap(table, channel)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to init perf map: %s\n", err)
+		os.Exit(1)
+	}
+
+	sig := make(chan os.Signal, 1)
+	signal.Notify(sig, os.Interrupt, os.Kill)
 	defer func() {
 		if err := module.RemoveXDP(device); err != nil {
 			fmt.Fprintf(os.Stderr, "Failed to remove XDP from %s: %v\n", device, err)
 			os.Exit(1)
 		}
 	}()
+	go func() {
+		var event chownEvent
+		for {
+			data := <-channel
+			err := binary.Read(bytes.NewBuffer(data), binary.LittleEndian, &event)
+			if err != nil {
+				fmt.Printf("failed to decode received data: %s\n", err)
+				continue
+			}
+			fmt.Printf("Got Packet with: SeqNum %d SrcIP %d DstIP %d\n",
+				event.SeqNum, event.SrcIP, event.DstIP)
+		}
+	}()
+
+	perfMap.Start()
+	<-sig
+	perfMap.Stop()
 
 }

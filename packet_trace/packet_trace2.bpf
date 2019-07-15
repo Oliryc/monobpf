@@ -9,9 +9,9 @@
 
 
 typedef struct {
-	long seq_number;
-	long src_ip;
-	long dest_ip;
+	uint64_t seq_number;
+	uint32_t src_ip;
+	uint32_t dest_ip;
 } packet_event_t;
 
 BPF_PERF_OUTPUT(packet_events);
@@ -50,10 +50,6 @@ int xdp_prog1(struct CTXTYPE *ctx) {
     if (ip_hdr->tot_len > 80){
         bpf_trace_printk("Adding a packet to the list: %u\n", tcp_hdr->seq);
         packet_events.perf_submit(ctx, &event, sizeof(event));
-    }
-    if (*hs_value > 255){
-        bpf_trace_printk("Error Head Size exceeded array size. Data was lost!\n");
-        *hs_value = 0;
     }
 
     return rc;
