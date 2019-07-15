@@ -29,55 +29,56 @@ var (
 	promiscuous       = false
 	timeout           = -1 * time.Second
 	handle      *pcap.Handle
+	use_one     = true
 )
 
 func main() {
+	if use_one {
+		packetTrace1()
+	} else {
+		packetTrace2()
+	}
+}
+
+func packetTrace1() {
 	filesrc, err := ioutil.ReadFile("packet_trace.bpf")
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to load xdp source %v\n", err)
 		os.Exit(1)
 	}
 	source := string(filesrc)
-
 	ret := "XDP_PASS"
 	ctxtype := "xdp_md"
-
 	module := bpf.NewModule(source, []string{
 		"-w",
 		"-DRETURNCODE=" + ret,
 		"-DCTXTYPE=" + ctxtype,
 	})
 	defer module.Close()
-
 	fn, err := module.Load("xdp_prog1", C.BPF_PROG_TYPE_XDP, 1, 65536)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to load xdp prog: %v\n", err)
 		os.Exit(1)
 	}
-
 	err = module.AttachXDP(device, fn)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to attach xdp prog: %v\n", err)
 		os.Exit(1)
 	}
-
 	defer func() {
 		if err := module.RemoveXDP(device); err != nil {
 			fmt.Fprintf(os.Stderr, "Failed to remove XDP from %s: %v\n", device, err)
 			os.Exit(1)
 		}
 	}()
-
 	headers := bpf.NewTable(module.TableId("headers"), module)
 	head_size := bpf.NewTable(module.TableId("head_size"), module)
-
 	// Open device
 	handle, err = pcap.OpenLive(device, snapshotLen, promiscuous, timeout)
 	if err != nil {
 		log.Fatal(err)
 	}
 	defer handle.Close()
-
 	packetSource := gopacket.NewPacketSource(handle, handle.LinkType())
 	for packet := range packetSource.Packets() {
 		header_list := headers.Iter()
@@ -135,4 +136,37 @@ func main() {
 			}
 		}
 	}
+}
+func packetTrace2() {
+	filesrc, err := ioutil.ReadFile("packet_trace2.bpf")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to load xdp source %v\n", err)
+		os.Exit(1)
+	}
+	source := string(filesrc)
+	ret := "XDP_PASS"
+	ctxtype := "xdp_md"
+	module := bpf.NewModule(source, []string{
+		"-w",
+		"-DRETURNCODE=" + ret,
+		"-DCTXTYPE=" + ctxtype,
+	})
+	defer module.Close()
+	fn, err := module.Load("xdp_prog1", C.BPF_PROG_TYPE_XDP, 1, 65536)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to load xdp prog: %v\n", err)
+		os.Exit(1)
+	}
+	err = module.AttachXDP(device, fn)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to attach xdp prog: %v\n", err)
+		os.Exit(1)
+	}
+	defer func() {
+		if err := module.RemoveXDP(device); err != nil {
+			fmt.Fprintf(os.Stderr, "Failed to remove XDP from %s: %v\n", device, err)
+			os.Exit(1)
+		}
+	}()
+
 }
