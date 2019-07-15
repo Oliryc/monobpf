@@ -1,0 +1,56 @@
+#define KBUILD_MODNAME "foo"
+#include <uapi/linux/bpf.h>
+#include <linux/in.h>
+#include <linux/if_ether.h>
+#include <linux/if_packet.h>
+#include <linux/if_vlan.h>
+#include <linux/ip.h>
+#include <linux/ipv6.h>
+
+
+typedef struct {
+	uint64_t seq_number;
+	uint32_t src_ip;
+	uint32_t dest_ip;
+} packet_event_t;
+
+BPF_PERF_OUTPUT(packet_events);
+
+int xdp_prog1(struct CTXTYPE *ctx) {
+
+    void* data_end = (void*)(long)ctx->data_end;
+    void* data = (void*)(long)ctx->data;
+
+    struct ethhdr *eth_hdr;
+    struct iphdr* ip_hdr;
+    struct tcphdr* tcp_hdr;
+    uint32_t hs_key =0;
+    uint32_t head_key =0;
+    long *hs_value;
+    long *head_value;
+    struct packet_event_t event = {};
+
+    eth_hdr = (struct ethhdr *)data;
+
+    // drop packets
+    int rc = RETURNCODE; // let pass XDP_PASS or redirect to tx via XDP_TX
+    ip_hdr = (struct iphdr *)(eth_hdr + 1);
+    if (ip_hdr + 1 > (struct iphdr *)data_end) {
+        bpf_trace_printk("=== Abort 2\n");
+        return XDP_PASS;
+    }
+    tcp_hdr = (struct tcphdr*)((u8 *)ip_hdr + ip_hdr->ihl * 4);
+    if (tcp_hdr + 1 > (struct tcphdr *)data_end) {
+        bpf_trace_printk("=== Abort 3\n");
+        return XDP_PASS;
+    }
+    event.seq_number = tcp_hdr->seq,
+    event.src_ip = tcp_hdr->source,
+    event.dest_ip = tcp_hdr->dest,
+    if (ip_hdr->tot_len > 80){
+        bpf_trace_printk("Adding a packet to the list: %u\n", tcp_hdr->seq);
+        packet_events.perf_submit(ctx, &event, sizeof(event));
+    }
+
+    return rc;
+}
