@@ -87,6 +87,7 @@ func main() {
 			continue
 		}
 		tcp, _ := tcpLayer.(*layers.TCP)
+		fmt.Fprintf(os.Stdout, "New packet!",tcp.Seq,"\n")
 		for header_list.Next() {
 			key, leaf := header_list.Key(), header_list.Leaf()
 			leaf_val, err := headers.LeafBytesToStr(leaf)
@@ -99,8 +100,9 @@ func main() {
 				fmt.Fprintf(os.Stderr, "Failed to convert to int", err)
 				os.Exit(1)
 			}
-			fmt.Fprintf(os.Stdout, "seq: ", tcp.Seq, ", leaf_val: ", leaf_int, "\n")
+			// fmt.Fprintf(os.Stdout, "seq: ", tcp.Seq, ", leaf_val: ", leaf_int, "\n")
 			if uint32(leaf_int) == tcp.Seq {
+				fmt.Fprintf(os.Stdout, "seq: ", tcp.Seq)
 				applicationLayer := packet.ApplicationLayer()
 				if applicationLayer != nil {
 					fmt.Println("Application layer/Payload found.")
