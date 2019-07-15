@@ -29,6 +29,7 @@ import socket
 from socket import inet_ntop, AF_INET, AF_INET6
 from struct import pack
 from os import path, read
+import re
 
 from bcc import BPF
 
@@ -41,6 +42,7 @@ from modules.pcpbcc import PCPBCCBase
 
 # TODO:
 # - IPv6 support?
+# - Port filtering
 
 #
 # BPF program
@@ -57,12 +59,23 @@ units_bytes = pmUnits(1, 0, 0, PM_SPACE_BYTE, 0, 0)
 units_usecs = pmUnits(0, 1, 0, 0, PM_TIME_USEC, 0)
 units_none = pmUnits(0, 0, 0, 0, 0, 0)
 
-# HTTP Metadata to be logged in PCP
-HttpMeta = namedtuple('HttpMeta', 
+# HTTP Metadata to be logged in PCP (some field may be empty)
+HttpMetaRequest = namedtuple('HttpMetaRequest', 
                       [
-                          'verb', # GET, POST…
-                          'path_query', # /path?key1=val1&key2=val2
+                          'method', # GET, POST…
+                          'path', # /path?key1=val1&key2=val2
                           'headers', # List containing the headers with value
+                       ])
+HttpMetaResponse = namedtuple('HttpMetaResponse', 
+                      [
+                          'code', # 404, 200…
+                          'txt', # Not found…
+                          'headers', # List containing the headers with value
+                       ])
+# For incorrect HTTP
+HttpMetaIncorrect = namedtuple('HttpMetaIncorrect', 
+                      [
+                          'line', # Line analysed that resulted in the classification as incorrect
                        ])
 
 CLEANUP_N_PACKETS  = 50       #run cleanup every CLEANUP_N_PACKETS packets received
@@ -88,6 +101,10 @@ class PCPBCCModule(PCPBCCBase):
         self.bpf_sessions = None
         self.socket_fd = None
         self.buffer_page_count = 64
+
+        # To extract data from HTTP packets, we will use this regex
+        http_request_or_answer = r'\A((?P<http_response>HTTP/1.1) (?P<code>\d+) (?P<txt>[^\r]*))|((?P<method>[A-Z]+) (?P<path>/\S*) (?P<http_request>HTTP/1.1)\r)\Z'
+        self.http_req_ans = re.compile(http_request_or_answer)
 
         for opt in self.config.options(MODULE):
             if opt == 'dport':
@@ -126,9 +143,8 @@ class PCPBCCModule(PCPBCCBase):
 
         return reduce(lambda x,y:x+y, lst)
 
-    #print str until CR+LF
-    # TODO Use this to update the cache
     def substringUntilCRLF(self, str, startChar=0):
+        """ Return substring from start to the first CRLF """
         for k in range (startChar, len(str)-1):
           if (str[k] == '\n'):
             if (str[k-1] == '\r'):
@@ -259,7 +275,8 @@ class PCPBCCModule(PCPBCCBase):
             if (crlf in payload_string):
               #url entirely contained in first packet -> print it all
               substring = self.substringUntilCRLF(payload_string)
-              self.log("****"+substring)
+              self.log("****"+substring) # TODO Add to cache
+              self.store_in_cache(substring)
 
               #delete current_Key from bpf_sessions, url already printed. current session not useful anymore
               try:
@@ -288,7 +305,8 @@ class PCPBCCModule(PCPBCCBase):
                   prev_payload_string += payload_string
                   #print HTTP GET/POST url
                   substring = self.substringUntilCRLF(payload_string)
-                  self.log("***//*"+substring)
+                  self.log("***//*"+substring) # TODO Remove this
+                  store_in_cache(substring)
                   #clean bpf_sessions & local_dictionary
                   try:
                     del self.bpf_sessions[current_Key]
@@ -323,8 +341,33 @@ class PCPBCCModule(PCPBCCBase):
             self.cleanup()
             self.log("Cleaned")
 
+    def store_in_cache(self, http_line, headers=''):
+        """ Extract data from an HTTP line like 'GET /index HTTP/1.1'
+            or 'HTTP/1.1 404 Not Found'
+        """
+        # TODO Add headers
+        httpMeta = HttpMetaIncorrect(line=http_line)
+        m = self.http_req_ans.match(http_line)
+        if m is None:
+            pass
+        elif (m['http_response']):
+            httpMeta = HttpMetaResponse(
+                code=int(m['code']),
+                txt=m['txt'],
+                headers=headers,
+            )
+        elif (m['http_request']):
+            httpMeta = HttpMetaRequest(
+                method=m['method'],
+                path=m['path'],
+                headers=headers,
+            )
+
+        # TODO Remove this
+        self.log("============= httpMeta "+str(httpMeta))
+
         self.lock.acquire()
-        self.cache.appendleft(HttpMeta(verb)) # TODO Finish to add things
+        self.cache.appendleft([httpMeta])
         self.lock.release()
 
     # pylint: disable=bad-continuation
