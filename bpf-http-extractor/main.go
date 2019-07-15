@@ -69,6 +69,7 @@ func main() {
 		fmt.Fprintf(os.Stderr, "Failed to attach xdp prog: %v\n", err)
 		os.Exit(1)
 	}
+	fmt.Printf("Attached!\n")
 
 	defer func() {
 		if err := module.RemoveXDP(device); err != nil {
@@ -76,7 +77,7 @@ func main() {
 		}
 	}()
 
-	fmt.Println("May be dropping packets, hit CTRL+C to stop. Se output of `sudo cat /sys/kernel/debug/tracing/trace_pipe`")
+	fmt.Println("May be dropping packets, hit CTRL+C to stop. See output of `sudo cat /sys/kernel/debug/tracing/trace_pipe`")
 
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, os.Interrupt, os.Kill)

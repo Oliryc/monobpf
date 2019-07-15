@@ -83,6 +83,7 @@ sock.setblocking(True)
 while 1:
   #retrieve raw packet from socket
   packet_str = os.read(socket_fd,2048)
+  continue
 
   #DEBUG - print raw packet in hex format
   #packet_hex = toHex(packet_str)

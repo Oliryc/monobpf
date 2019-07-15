@@ -14,6 +14,10 @@
   return -1 -> KEEP the packet and return it to user space (userspace can read it from the socket_fd )
 */
 int http_filter(struct __sk_buff *skb) {
+  bpf_trace_printk("You should see only this\n");
+  return 2;
+  bpf_trace_printk("You should NEVER see this\n");
+
 	u8 *cursor = 0;
 
 	struct ethernet_t *ethernet = cursor_advance(cursor, sizeof(*ethernet));
