@@ -24,11 +24,7 @@ int xdp_prog1(struct CTXTYPE *ctx) {
     struct ethhdr *eth_hdr;
     struct iphdr* ip_hdr;
     struct tcphdr* tcp_hdr;
-    uint32_t hs_key =0;
-    uint32_t head_key =0;
-    long *hs_value;
-    long *head_value;
-    struct packet_event_t event = {};
+    packet_event_t event = {};
 
     eth_hdr = (struct ethhdr *)data;
 
@@ -44,9 +40,9 @@ int xdp_prog1(struct CTXTYPE *ctx) {
         bpf_trace_printk("=== Abort 3\n");
         return XDP_PASS;
     }
-    event.seq_number = tcp_hdr->seq,
-    event.src_ip = tcp_hdr->source,
-    event.dest_ip = tcp_hdr->dest,
+    event.seq_number = tcp_hdr->seq;
+    event.src_ip = tcp_hdr->source;
+    event.dest_ip = tcp_hdr->dest;
     if (ip_hdr->tot_len > 80){
         bpf_trace_printk("Adding a packet to the list: %u\n", tcp_hdr->seq);
         packet_events.perf_submit(ctx, &event, sizeof(event));

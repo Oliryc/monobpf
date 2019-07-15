@@ -10,7 +10,7 @@ void perf_reader_free(void *ptr);
 import "C"
 
 import (
-	"bytes"
+        "bytes"
 	"encoding/binary"
 	"fmt"
 	"github.com/google/gopacket"
@@ -175,7 +175,7 @@ func packetTrace2() {
 		fmt.Fprintf(os.Stderr, "Failed to attach xdp prog: %v\n", err)
 		os.Exit(1)
 	}
-	table := bpf.NewTable(module.TableId("chown_events"), module)
+	table := bpf.NewTable(module.TableId("packet_events"), module)
 
 	channel := make(chan []byte)
 
@@ -199,7 +199,7 @@ func packetTrace2() {
 			data := <-channel
 			err := binary.Read(bytes.NewBuffer(data), binary.LittleEndian, &event)
 			if err != nil {
-				fmt.Printf("failed to decode received data: %s\n", err)
+			fmt.Printf("failed to decode received data: %s\n", err)
 				continue
 			}
 			fmt.Printf("Got Packet with: SeqNum %d SrcIP %d DstIP %d\n",
