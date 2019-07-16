@@ -182,7 +182,7 @@ class PCPBCCModule(PCPBCCBase):
               if (current_time - current_leaf.timestamp > MAX_AGE_SECONDS):
                 del self.bpf_sessions[key]
           except:
-            print("cleanup exception.")
+            self.log("cleanup exception.")
         return
 
     def http_packet_poller(self):
@@ -196,7 +196,7 @@ class PCPBCCModule(PCPBCCBase):
 
         while 1:
           #retrieve raw packet from socket
-          packet_str = read(self.socket_fd,4096) #set packet length to max packet length on the interface
+          packet_str = read(self.socket_fd,4096) # TODO set packet length to max packet length on the interface in the config file
           packet_count += 1
 
           #DEBUG - print raw packet in hex format
@@ -293,14 +293,13 @@ class PCPBCCModule(PCPBCCBase):
             if (crlf in payload_string):
               #url entirely contained in first packet -> print it all
               substring = self.substringUntilCRLF(payload_string)
-              self.log("****"+substring) # TODO Add to cache
               self.store_in_cache(substring, tcp_ip_features)
 
               #delete current_Key from bpf_sessions, url already printed. current session not useful anymore
               try:
                 del self.bpf_sessions[current_Key]
               except:
-                print ("error during delete from bpf map ")
+                self.error("error during delete from bpf map ")
             else:
               #url NOT entirely contained in first packet
               #not found \r\n in payload.
@@ -323,7 +322,6 @@ class PCPBCCModule(PCPBCCBase):
                   prev_payload_string += payload_string
                   #print HTTP GET/POST url
                   substring = self.substringUntilCRLF(payload_string)
-                  self.log("***//*"+substring) # TODO Remove this
                   store_in_cache(substring, tcp_ip_features)
                   #clean bpf_sessions & local_dictionary
                   try:
@@ -337,7 +335,7 @@ class PCPBCCModule(PCPBCCBase):
                   prev_payload_string += payload_string
                   #check if not size exceeding (usually HTTP GET/POST url < 8K )
                   if (len(prev_payload_string) > MAX_URL_STRING_LEN):
-                    print("url too long")
+                    self.log("url too long")
                     try:
                       del self.bpf_sessions[current_Key]
                       del local_dictionary[binascii.hexlify(current_Key)]
@@ -349,15 +347,13 @@ class PCPBCCModule(PCPBCCBase):
                 #first part of the HTTP GET/POST url is NOT present in local dictionary
                 #bpf_sessions contains invalid entry -> delete it
                 try:
-                  del self.bpf_sessions[current_Key]
-                except:
-                  print ("error del bpf_session")
+                    del self.bpf_sessions[current_Key]
+                except Exception as e:
+                    print ("error del bpf_session: "+str(e))
 
           #check if dirty entry are present in bpf_sessions
           if (((packet_count) % CLEANUP_N_PACKETS) == 0):
-            self.log("Cleaning…")
             self.cleanup()
-            self.log("Cleaned")
 
     def store_in_cache(self, http_line, tcp_ip_features, headers=''):
         """ Extract data from an HTTP line like 'GET /index HTTP/1.1'
@@ -382,9 +378,6 @@ class PCPBCCModule(PCPBCCBase):
                 headers=headers,
                 **tcp_ip_features,
             )
-
-        # TODO Remove this
-        #  self.log("============= httpMeta "+str(httpMeta))
 
         self.lock.acquire()
         self.cache.appendleft(httpMeta)
@@ -453,9 +446,6 @@ class PCPBCCModule(PCPBCCBase):
                 return None
         try:
             key = int(self.pmdaIndom.inst_name_lookup(inst))
-            #  self.log("self.cache "+str(key)+" "+str(item))
-            self.log("self.cache key:"+str(key)+", item: "+str(item))
-
             # h stands for httpMeta, as we match an HttpMetaIncorrect,
             # HttpMetaRequest or HttpMetaResponse object
             key_metrics_mapping = {
@@ -474,8 +464,10 @@ class PCPBCCModule(PCPBCCBase):
             value = key_metrics_mapping[item](self.cache[key])
             self.lock.release()
 
-            if value is not None: return [value, 1]
-            else: return [PMDA_FETCH_NOVALUES, 0]
+            if value is not None:
+                return [value, 1]
+            else:
+                return [PMDA_FETCH_NOVALUES, 0]
         except Exception as e: # pylint: disable=broad-except
             self.lock.release()
             self.log("bpfdata Exception: "+str(e))
