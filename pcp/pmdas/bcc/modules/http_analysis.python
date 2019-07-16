@@ -107,6 +107,7 @@ class PCPBCCModule(PCPBCCBase):
 
         self.proc_refresh = proc_refresh
 
+        # TODO Make some of these param of the config file
         self.interface = None
         self.dports = []
         self.lports = []
