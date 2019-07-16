@@ -396,13 +396,14 @@ class PCPBCCModule(PCPBCCBase):
         name = BASENS
         self.items = (
             # Name - reserved - type - semantics - units - help
-            (name + 'http-method', None, PM_TYPE_STRING, PM_SEM_INSTANT, units_none, 'method'),
-            #  (name + 'path', None, PM_TYPE_STRING, PM_SEM_INSTANT, units_none, 'path'),
-            #  (name + 'laddr', None, PM_TYPE_STRING, PM_SEM_INSTANT, units_none, 'local address'),
-            #  (name + 'lport', None, PM_TYPE_U32, PM_SEM_INSTANT, units_none, 'local port'),
-            #  (name + 'daddr', None, PM_TYPE_STRING, PM_SEM_INSTANT, units_none, 'destination '
-                                                                               #  'address'),
-            #  (name + 'dport', None, PM_TYPE_U32, PM_SEM_INSTANT, units_none, 'destination port'),
+            (name + 'laddr', None, PM_TYPE_STRING, PM_SEM_INSTANT, units_none, 'local address'),
+            (name + 'lport', None, PM_TYPE_U32, PM_SEM_INSTANT, units_none, 'local port'),
+            (name + 'daddr', None, PM_TYPE_STRING, PM_SEM_INSTANT, units_none, 'destination '
+                                                                               'address'),
+            (name + 'dport', None, PM_TYPE_U32, PM_SEM_INSTANT, units_none, 'destination port'),
+            (name + 'identifier', None, PM_TYPE_STRING, PM_SEM_INSTANT, units_none, 'method or code'),
+            (name + 'param', None, PM_TYPE_STRING, PM_SEM_INSTANT, units_none, 'path or message'),
+            (name + 'headers', None, PM_TYPE_STRING, PM_SEM_INSTANT, units_none, 'http headers'),
         )
         return True, self.items
 
@@ -444,17 +445,39 @@ class PCPBCCModule(PCPBCCBase):
 
     def bpfdata(self, item, inst):
         """ Return BPF data as PCP metric value """
+        def noneOnAttrErr(attribute_access_function):
+            """ Return None in case the attribute_access_function raises AttributeError """
+            try:
+                return attribute_access_function()
+            except AttributeError:
+                return None
         try:
             key = int(self.pmdaIndom.inst_name_lookup(inst))
             #  self.log("self.cache "+str(key)+" "+str(item))
-            self.log("self.cache "+str(key)+" "+str(item))
-            #  self.log("self.cache "+str(self.cache))
+            self.log("self.cache key:"+str(key)+", item: "+str(item))
+
+            # h stands for httpMeta, as we match an HttpMetaIncorrect,
+            # HttpMetaRequest or HttpMetaResponse object
+            key_metrics_mapping = {
+                0: lambda h: noneOnAttrErr(lambda: h.src_ip),
+                1: lambda h: noneOnAttrErr(lambda: h.src_port),
+                2: lambda h: noneOnAttrErr(lambda: h.dst_ip),
+                3: lambda h: noneOnAttrErr(lambda: h.dst_port),
+                # We are getting different type of object, we try in this order:
+                # HttpMetaRequest or HttpMetaResponse or HttpMetaIncorrect
+                4: lambda h: noneOnAttrErr(lambda: h.method) or noneOnAttrErr(lambda: str(h.code)) or None,
+                5: lambda h: noneOnAttrErr(lambda: h.path) or noneOnAttrErr(lambda: h.txt) or noneOnAttrErr(lambda: h.line),
+                6: lambda h: noneOnAttrErr(lambda: h.headers) or noneOnAttrErr(lambda: h.headers) or None,
+            }
+
             self.lock.acquire()
-            value = self.cache[key]
-            #  value = self.cache[key].method or self.cache[key].code
+            value = key_metrics_mapping[item](self.cache[key])
             self.lock.release()
-            return [str(value), 1]
-        except Exception: # pylint: disable=broad-except
+
+            if value is not None: return [value, 1]
+            else: return [PMDA_FETCH_NOVALUES, 0]
+        except Exception as e: # pylint: disable=broad-except
             self.lock.release()
+            self.log("bpfdata Exception: "+str(e))
             return [PMDA_FETCH_NOVALUES, 0]
 
