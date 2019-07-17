@@ -31,6 +31,7 @@ from socket import inet_ntop, AF_INET, AF_INET6
 from struct import pack
 from os import path, read
 import re
+import json
 
 from bcc import BPF
 
@@ -69,7 +70,7 @@ HttpMetaRequest = namedtuple('HttpMetaRequest',
                           'dst_ip',
                           'method', # GET, POST…
                           'path', # /path?key1=val1&key2=val2
-                          'headers', # List containing the headers with value
+                          'headers', # String containing a JSON array of headers (key/value)
                        ])
 HttpMetaResponse = namedtuple('HttpMetaResponse', 
                       [
@@ -79,7 +80,7 @@ HttpMetaResponse = namedtuple('HttpMetaResponse',
                           'dst_ip',
                           'code', # 404, 200…
                           'txt', # Not found…
-                          'headers', # List containing the headers with value
+                          'headers', # String containing a JSON array of headers (key/value)
                        ])
 # For incorrect HTTP
 HttpMetaIncorrect = namedtuple('HttpMetaIncorrect', 
@@ -94,6 +95,10 @@ HttpMetaIncorrect = namedtuple('HttpMetaIncorrect',
 CLEANUP_N_PACKETS  = 50       #run cleanup every CLEANUP_N_PACKETS packets received
 MAX_URL_STRING_LEN = 8192     #max url string len (usually 8K)
 MAX_AGE_SECONDS    = 30       #max age entry in bpf_sessions map
+MAX_N_HEADER       = 30          #max number of header to be matched
+CRLF               = "\r\n"      #HTTP separator
+# Format of header from https://tools.ietf.org/html/rfc7230#section-3.2
+HTTP_HEADER_REGEX       = re.compile(r'\A(.*?): ?(.*\S) ?\Z')  # To parse HTTP headers key/value
 
 
 #
@@ -117,7 +122,7 @@ class PCPBCCModule(PCPBCCBase):
         self.buffer_page_count = 64
 
         # To extract data from HTTP packets, we will use this regex
-        http_request_or_answer = r'\A((?P<http_response>HTTP/1.1) (?P<code>\d+) (?P<txt>[^\r]*))|((?P<method>[A-Z]+) (?P<path>/\S*) (?P<http_request>HTTP/1.1)\r)\Z'
+        http_request_or_answer = r'\A((?P<http_response>HTTP/1.1) (?P<code>\d+) (?P<txt>.*))|((?P<method>[A-Z]+) (?P<path>/\S*) (?P<http_request>HTTP/1.1))\Z'
         self.http_req_ans = re.compile(http_request_or_answer)
 
         for opt in self.config.options(MODULE):
@@ -157,12 +162,11 @@ class PCPBCCModule(PCPBCCBase):
 
         return reduce(lambda x,y:x+y, lst)
 
-    def substringUntilCRLF(self, str, startChar=0):
+    def substringUntilCRLF(self, string):
         """ Return substring from start to the first CRLF """
-        for k in range (startChar, len(str)-1):
-          if (str[k] == '\n'):
-            if (str[k-1] == '\r'):
-              return str[startChar:k]
+        l = string.split(CRLF, maxsplit=1)
+        if len(l) > 1: # At least one substring
+              return l[0]
         return ""
 
     #cleanup function
@@ -280,9 +284,6 @@ class PCPBCCModule(PCPBCCBase):
           #payload_string contains only packet payload
           payload_string = packet_str[(payload_offset):(len(packet_bytearray))].decode()
 
-          #CR + LF (substring to find)
-          crlf = "\r\n"
-
           #current_Key contains ip source/dest and port source/map
           #useful for direct bpf_sessions map access
           current_Key = self.bpf_sessions.Key(ip_src,ip_dst,port_src,port_dst)
@@ -291,10 +292,10 @@ class PCPBCCModule(PCPBCCBase):
           if ((payload_string[:3] == "GET") or (payload_string[:4] == "POST")   or (payload_string[:4] == "HTTP")  \
           or ( payload_string[:3] == "PUT") or (payload_string[:6] == "DELETE") or (payload_string[:4] == "HEAD") ):
             #match: HTTP GET/POST packet found
-            if (crlf in payload_string):
+            if (CRLF in payload_string):
               #url entirely contained in first packet -> print it all
-              substring = self.substringUntilCRLF(payload_string)
-              self.store_in_cache(substring, tcp_ip_features)
+              (first_line, headers) = self.first_line_and_headers(payload_string)
+              self.store_in_cache(first_line, tcp_ip_features, headers)
 
               #delete current_Key from bpf_sessions, url already printed. current session not useful anymore
               try:
@@ -317,13 +318,13 @@ class PCPBCCModule(PCPBCCBase):
                 #first part of the HTTP GET/POST url is already present in local dictionary (prev_payload_string)
                 prev_payload_string = local_dictionary[binascii.hexlify(current_Key)]
                 #looking for CR+LF in current packet.
-                if (crlf in payload_string):
+                if (CRLF in payload_string):
                   #last packet. containing last part of HTTP GET/POST url splitted in N packets.
                   #append current payload
                   prev_payload_string += payload_string
                   #print HTTP GET/POST url
                   substring = self.substringUntilCRLF(payload_string)
-                  store_in_cache(substring, tcp_ip_features)
+                  self.store_in_cache(substring, tcp_ip_features)
                   #clean bpf_sessions & local_dictionary
                   try:
                     del self.bpf_sessions[current_Key]
@@ -356,12 +357,30 @@ class PCPBCCModule(PCPBCCBase):
           if (((packet_count) % CLEANUP_N_PACKETS) == 0):
             self.cleanup()
 
-    def store_in_cache(self, http_line, tcp_ip_features, headers=''):
+    def first_line_and_headers(self, payload_string):
+        """Extract first line (like 'GET /index.html HTTP/1.1') and headers that would be in the payload"""
+        def split_header(http_header):
+            kv = HTTP_HEADER_REGEX.match(http_header)
+            if kv is None: return ""
+            g1 = kv.group(1)
+            g2 = kv.group(2)
+            if g1 and g2: return {g1: g2}
+        lines = payload_string.split(CRLF, MAX_N_HEADER)
+        if len(lines) <= 1: # No CRLF in the payload
+            return "", []
+        # TODO Dissociate header key and value
+        headers = list(filter(
+            lambda l: l != "",
+            map(split_header, lines[1:])
+        ))
+        return lines[0], headers
+
+    def store_in_cache(self, http_line, tcp_ip_features, headers=[]):
         """ Extract data from an HTTP line like 'GET /index HTTP/1.1'
             or 'HTTP/1.1 404 Not Found'
         """
-        # TODO Add headers
-        httpMeta = HttpMetaIncorrect(**tcp_ip_features, line=http_line)
+        headers_str = json.dumps(headers)
+        httpMeta = HttpMetaIncorrect(line=http_line, **tcp_ip_features)
         m = self.http_req_ans.match(http_line)
         if m is None:
             pass
@@ -369,15 +388,15 @@ class PCPBCCModule(PCPBCCBase):
             httpMeta = HttpMetaResponse(
                 code=int(m['code']),
                 txt=m['txt'],
-                headers=headers,
-                **tcp_ip_features,
+                headers=headers_str,
+                **tcp_ip_features
             )
         elif (m['http_request']):
             httpMeta = HttpMetaRequest(
                 method=m['method'],
                 path=m['path'],
-                headers=headers,
-                **tcp_ip_features,
+                headers=headers_str,
+                **tcp_ip_features
             )
 
         self.lock.acquire()
