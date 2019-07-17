@@ -61,7 +61,7 @@ units_bytes = pmUnits(1, 0, 0, PM_SPACE_BYTE, 0, 0)
 units_usecs = pmUnits(0, 1, 0, 0, PM_TIME_USEC, 0)
 units_none = pmUnits(0, 0, 0, 0, 0, 0)
 
-# HTTP Metadata to be logged in PCP (some field may be empty)
+# HTTP Metadata to be logged in PCP (some field may be empty). Note: headers are in a list because we need to be able to show duplicated key headers. Will be serialised as JSON array
 HttpMetaRequest = namedtuple('HttpMetaRequest', 
                       [
                           'src_port',
@@ -70,7 +70,7 @@ HttpMetaRequest = namedtuple('HttpMetaRequest',
                           'dst_ip',
                           'method', # GET, POST…
                           'path', # /path?key1=val1&key2=val2
-                          'headers', # String containing a JSON array of headers (key/value)
+                          'headers', # List containing dictionnary for key/value of HTTP headers
                        ])
 HttpMetaResponse = namedtuple('HttpMetaResponse', 
                       [
@@ -80,7 +80,7 @@ HttpMetaResponse = namedtuple('HttpMetaResponse',
                           'dst_ip',
                           'code', # 404, 200…
                           'txt', # Not found…
-                          'headers', # String containing a JSON array of headers (key/value)
+                          'headers', # List containing dictionnary for key/value of HTTP headers
                        ])
 # For incorrect HTTP
 HttpMetaIncorrect = namedtuple('HttpMetaIncorrect', 
@@ -295,7 +295,13 @@ class PCPBCCModule(PCPBCCBase):
             if (CRLF in payload_string):
               #url entirely contained in first packet -> print it all
               (first_line, headers) = self.first_line_and_headers(payload_string)
-              self.store_in_cache(first_line, tcp_ip_features, headers)
+              httpMeta = self.in_httpMeta(first_line, tcp_ip_features, headers)
+              self.store_in_cache(httpMeta)
+
+              # XXX Find a way to log this for PCP
+              #  self.log("is_websocket_upgrade "+str(self.is_websocket_upgrade(httpMeta)))
+              if self.is_websocket_upgrade(httpMeta):
+                  self.log("======================== \/\/ ,/’ "+str(self.is_websocket_upgrade(httpMeta)))
 
               #delete current_Key from bpf_sessions, url already printed. current session not useful anymore
               try:
@@ -368,18 +374,16 @@ class PCPBCCModule(PCPBCCBase):
         lines = payload_string.split(CRLF, MAX_N_HEADER)
         if len(lines) <= 1: # No CRLF in the payload
             return "", []
-        # TODO Dissociate header key and value
         headers = list(filter(
             lambda l: l != "",
             map(split_header, lines[1:])
         ))
         return lines[0], headers
 
-    def store_in_cache(self, http_line, tcp_ip_features, headers=[]):
+    def in_httpMeta(self, http_line, tcp_ip_features, headers=[]):
         """ Extract data from an HTTP line like 'GET /index HTTP/1.1'
-            or 'HTTP/1.1 404 Not Found'
+            or 'HTTP/1.1 404 Not Found' in an httpMeta* object
         """
-        headers_str = json.dumps(headers)
         httpMeta = HttpMetaIncorrect(line=http_line, **tcp_ip_features)
         m = self.http_req_ans.match(http_line)
         if m is None:
@@ -388,20 +392,67 @@ class PCPBCCModule(PCPBCCBase):
             httpMeta = HttpMetaResponse(
                 code=int(m['code']),
                 txt=m['txt'],
-                headers=headers_str,
+                headers=headers,
                 **tcp_ip_features
             )
         elif (m['http_request']):
             httpMeta = HttpMetaRequest(
                 method=m['method'],
                 path=m['path'],
-                headers=headers_str,
+                headers=headers,
                 **tcp_ip_features
             )
+        return httpMeta
+
+    def store_in_cache(self, httpMeta):
+        """ Store an httpMeta in cache, serialising fields when necessary """
+        # Serialize headers
+        t = type(httpMeta)
+        if t is HttpMetaRequest or t is HttpMetaResponse:
+            headers_str = json.dumps(httpMeta.headers)
+            httpMeta = httpMeta._replace(headers = headers_str)
 
         self.lock.acquire()
         self.cache.appendleft(httpMeta)
         self.lock.release()
+
+    def is_websocket_upgrade(self, httpMeta):
+        """ Return non 0 code if the httpMeta* structure is a websocket upgrade. Return 1 for the client request and 2 for the server answer. See https://tools.ietf.org/html/rfc6455 """
+        def put_header_dict_lower():
+            """ Put all in one dictionary, with lower case key as they are case insensitive according to RFC """
+            headers_dict = {}
+            for d in httpMeta.headers:
+                # Headers key are case insensitive
+                headers_dict.update({k.lower(): v for k,v in d.items()})
+            return headers_dict
+
+        if type(httpMeta) is HttpMetaIncorrect:
+            return 0
+        # Page 21, https://tools.ietf.org/html/rfc6455#section-4.2.1, verifying only the minimum
+        if type(httpMeta) is HttpMetaRequest:
+            if httpMeta.method == "GET":
+                headers_dict = put_header_dict_lower()
+                if headers_dict.get("upgrade") and headers_dict["upgrade"].lower() == "websocket" \
+                        \
+                        and headers_dict.get("sec-websocket-key") \
+                        and headers_dict.get("sec-websocket-version"):
+                    return 1
+            return 0
+        # Page 19, https://tools.ietf.org/html/rfc6455#section-4.1, verifying only the minimum
+        if type(httpMeta) is HttpMetaResponse:
+            if httpMeta.code == 101:
+                headers_dict = put_header_dict_lower()
+                if headers_dict.get("upgrade") \
+                        and "websocket" in map(lambda l: l.lower(), headers_dict["upgrade"].split(", ")) \
+                        \
+                        and headers_dict.get("connection") \
+                        and "upgrade" in map(lambda l: l.lower(), headers_dict["connection"].split(", ")) \
+                        \
+                        and headers_dict.get("sec-websocket-accept"):
+                    return 2
+            return 0
+        self.log("is_websocket_upgrade: incorrect type of argument")
+        return 0
 
     # pylint: disable=bad-continuation
     def metrics(self):
