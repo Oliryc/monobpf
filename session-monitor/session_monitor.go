@@ -55,7 +55,7 @@ func main() {
 	})
 	defer module.Close()
 
-	fn, err := module.Load("xdp_prog1", C.BPF_PROG_TYPE_XDP, 1, 65536)
+	fn, err := module.Load("session_monitor", C.SOCKET_FILTER, 1, 65536)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to load xdp prog: %v\n", err)
 		os.Exit(1)
