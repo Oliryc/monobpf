@@ -118,6 +118,7 @@ class PCPBCCModule(PCPBCCBase):
         self.dports = []
         self.sports = []
         self.ports = []
+        self.ips = []
         self.session_count = 20
         self.bpf_sessions = None
         self.socket_fd = None
@@ -138,6 +139,10 @@ class PCPBCCModule(PCPBCCBase):
             if opt == 'sport':
                 self.sports = [int(port) for port in self.config.get(MODULE, opt).split(",")]
                 self.log("Filtering on local ports: %s." % str(self.sports))
+            if opt == 'ip':
+                packed = self.config.get(MODULE, opt).split(",")
+                self.ips = [socket.inet_aton(ip) for ip in packed]
+                self.log("Filtering on local ips: %s." % str(packed))
             if opt == 'interface': # Interface for the capture
                 self.interface = self.config.get(MODULE, opt)
                 self.log("Binding socket to: %s." % str(self.interface))
@@ -499,6 +504,13 @@ class PCPBCCModule(PCPBCCBase):
                     filterp = " && ".join(["key.src_port != %d" % port for port in self.sports])
                     filter_txt = "if (%s) { goto DROP; }" % filterp
                     self.bpf_text = self.bpf_text.replace("//FILTER_LPORT", filter_txt)
+
+                if self.ips:
+                    filteri_dst = " && ".join(["key.dst_ip != 0x%s" % ip.hex() for ip in self.ips])
+                    filteri_src = " && ".join(["key.src_ip != 0x%s" % ip.hex() for ip in self.ips])
+                    filteri = " && ".join(["(%s)" % filt for filt in [filteri_dst, filteri_src]])
+                    filter_txt = "if (%s) { goto DROP; }" % filteri
+                    self.bpf_text = self.bpf_text.replace("//FILTER_IP", filter_txt)
 
             self.bpf = BPF(text=self.bpf_text)
             #load eBPF program http_filter of type SOCKET_FILTER into the kernel eBPF vm
