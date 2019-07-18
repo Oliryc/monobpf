@@ -431,12 +431,29 @@ class PCPBCCModule(PCPBCCBase):
     def is_websocket_upgrade(self, httpMeta):
         """ Return non 0 code if the httpMeta* structure is a websocket upgrade. Return 1 for the client request and 2 for the server answer. See https://tools.ietf.org/html/rfc6455 """
         def put_header_dict_lower():
-            """ Put all in one dictionary, with lower case key as they are case insensitive according to RFC """
+            """ Put all in one dictionary, with lower case key as they are case insensitive according to RFC. Account for the fact that key may be duplicated """
             headers_dict = {}
             for d in httpMeta.headers:
-                # Headers key are case insensitive
-                headers_dict.update({k.lower(): v for k,v in d.items()})
+                for k,v in d.items(): # Should run once as these dictonary contain only one value
+                    # Headers key are case insensitive
+                    kl = k.lower()
+                    l = headers_dict.get(kl, [])
+                    l.append(v)
+                    headers_dict[kl] = l
             return headers_dict
+
+        def header_with_value(headers_dict, header_key, required_header_value):
+            """ Return None if header_key is not in headers_dict.
+                Return True if a given header_key is present with a value
+                header_value (splitted on ',', case insensitive), False otherwise """
+            key = header_key.lower()
+            req_val = required_header_value.lower()
+
+            if key not in headers_dict: return None
+            for val in headers_dict[key]:
+                if req_val in map(lambda l: l.lower(), val.split(", ")):
+                    return True
+            return False
 
         if type(httpMeta) is HttpMetaIncorrect:
             return 0
@@ -444,8 +461,7 @@ class PCPBCCModule(PCPBCCBase):
         if type(httpMeta) is HttpMetaRequest:
             if httpMeta.method == "GET":
                 headers_dict = put_header_dict_lower()
-                if headers_dict.get("upgrade") and headers_dict["upgrade"].lower() == "websocket" \
-                        \
+                if header_with_value(headers_dict, "upgrade", "websocket") \
                         and headers_dict.get("sec-websocket-key") \
                         and headers_dict.get("sec-websocket-version"):
                     return 1
@@ -454,12 +470,8 @@ class PCPBCCModule(PCPBCCBase):
         if type(httpMeta) is HttpMetaResponse:
             if httpMeta.code == 101:
                 headers_dict = put_header_dict_lower()
-                if headers_dict.get("upgrade") \
-                        and "websocket" in map(lambda l: l.lower(), headers_dict["upgrade"].split(", ")) \
-                        \
-                        and headers_dict.get("connection") \
-                        and "upgrade" in map(lambda l: l.lower(), headers_dict["connection"].split(", ")) \
-                        \
+                if header_with_value(headers_dict, "upgrade", "websocket") \
+                        and header_with_value(headers_dict, "connection", "upgrade") \
                         and headers_dict.get("sec-websocket-accept"):
                     return 2
             return 0
