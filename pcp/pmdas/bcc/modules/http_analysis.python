@@ -113,13 +113,15 @@ class PCPBCCModule(PCPBCCBase):
         self.proc_refresh = proc_refresh
 
         # TODO Make some of these param of the config file
+        self.debug = True
         self.interface = None
         self.dports = []
-        self.lports = []
+        self.sports = []
         self.session_count = 20
         self.bpf_sessions = None
         self.socket_fd = None
         self.buffer_page_count = 64
+        self.bpf_text = None
 
         # To extract data from HTTP packets, we will use this regex
         http_request_or_answer = r'\A((?P<http_response>HTTP/1.1) (?P<code>\d+) (?P<txt>.*))|((?P<method>[A-Z]+) (?P<path>/\S*) (?P<http_request>HTTP/1.1))\Z'
@@ -129,9 +131,9 @@ class PCPBCCModule(PCPBCCBase):
             if opt == 'dport':
                 self.dports = [int(port) for port in self.config.get(MODULE, opt).split(",")]
                 self.log("Filtering on remote ports: %s." % str(self.dports))
-            if opt == 'lport':
-                self.lports = [int(port) for port in self.config.get(MODULE, opt).split(",")]
-                self.log("Filtering on local ports: %s." % str(self.lports))
+            if opt == 'sport':
+                self.sports = [int(port) for port in self.config.get(MODULE, opt).split(",")]
+                self.log("Filtering on local ports: %s." % str(self.sports))
             if opt == 'interface': # Interface for the capture
                 self.interface = self.config.get(MODULE, opt)
                 self.log("Binding socket to: %s." % str(self.interface))
@@ -298,6 +300,7 @@ class PCPBCCModule(PCPBCCBase):
               httpMeta = self.in_httpMeta(first_line, tcp_ip_features, headers)
               self.store_in_cache(httpMeta)
 
+              # TODO Make detection of ws configurable
               # XXX Find a way to log this for PCP
               #  self.log("is_websocket_upgrade "+str(self.is_websocket_upgrade(httpMeta)))
               if self.is_websocket_upgrade(httpMeta):
@@ -460,8 +463,8 @@ class PCPBCCModule(PCPBCCBase):
         name = BASENS
         self.items = (
             # Name - reserved - type - semantics - units - help
-            (name + 'laddr', None, PM_TYPE_STRING, PM_SEM_INSTANT, units_none, 'local address'),
-            (name + 'lport', None, PM_TYPE_U32, PM_SEM_INSTANT, units_none, 'local port'),
+            (name + 'saddr', None, PM_TYPE_STRING, PM_SEM_INSTANT, units_none, 'source address'),
+            (name + 'sport', None, PM_TYPE_U32, PM_SEM_INSTANT, units_none, 'source port'),
             (name + 'daddr', None, PM_TYPE_STRING, PM_SEM_INSTANT, units_none, 'destination '
                                                                                'address'),
             (name + 'dport', None, PM_TYPE_U32, PM_SEM_INSTANT, units_none, 'destination port'),
@@ -474,7 +477,20 @@ class PCPBCCModule(PCPBCCBase):
     def compile(self):
         """ Compile BPF """
         try:
-            self.bpf = BPF(src_file=bpf_src)
+            if not self.bpf_text:
+                with open(path.dirname(__file__) + '/../' + bpf_src) as src:
+                    self.bpf_text = src.read()
+
+                if self.dports:
+                    filterp = " && ".join(["key.dst_port != %d" % port for port in self.dports])
+                    filter_txt = "if (%s) { goto DROP; }" % filterp
+                    self.bpf_text = self.bpf_text.replace("//FILTER_DPORT", filter_txt)
+                if self.sports:
+                    filterp = " && ".join(["key.src_port != %d" % port for port in self.sports])
+                    filter_txt = "if (%s) { goto DROP; }" % filterp
+                    self.bpf_text = self.bpf_text.replace("//FILTER_LPORT", filter_txt)
+
+            self.bpf = BPF(text=self.bpf_text)
             #load eBPF program http_filter of type SOCKET_FILTER into the kernel eBPF vm
             #more info about eBPF program types
             #http://man7.org/linux/man-pages/man2/bpf.2.html
@@ -489,6 +505,9 @@ class PCPBCCModule(PCPBCCBase):
             #set it as blocking socket
             sock.setblocking(True)
             self.bpf_sessions = self.bpf.get_table("sessions")
+
+            if self.debug:
+                self.log("BPF to be compiled:\n" + self.bpf_text.strip())
 
             self.thread = Thread(name="socketpoller", target=self.http_packet_poller)
             self.thread.setDaemon(True)
