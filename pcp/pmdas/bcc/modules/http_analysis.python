@@ -67,7 +67,7 @@ HttpMetaRequest = namedtuple('HttpMetaRequest',
                           'method', # GET, POST…
                           'path', # /path?key1=val1&key2=val2
                           'headers', # List containing dictionnary for key/value of HTTP headers
-                          'is_websocket_upgrade', # Is detected as websocket upgrade?
+                          'is_websocket_upgrade', # Is detected as websocket upgrade? None if no detection attempt, 0 if not an upgrade, 1 if client side of the handshake, 2 for server side
                        ])
 HttpMetaResponse = namedtuple('HttpMetaResponse', 
                       [
@@ -78,7 +78,7 @@ HttpMetaResponse = namedtuple('HttpMetaResponse',
                           'code', # 404, 200…
                           'txt', # Not found…
                           'headers', # List containing dictionnary for key/value of HTTP headers
-                          'is_websocket_upgrade', # Is detected as websocket upgrade?
+                          'is_websocket_upgrade', # Idem
                        ])
 # For incorrect HTTP
 HttpMetaIncorrect = namedtuple('HttpMetaIncorrect', 
@@ -408,7 +408,7 @@ class PCPBCCModule(PCPBCCBase):
                 code=int(m['code']),
                 txt=m['txt'],
                 headers=headers,
-                is_websocket_upgrade=False,
+                is_websocket_upgrade=None,
                 **tcp_ip_features
             )
         elif (m['http_request']):
@@ -416,7 +416,7 @@ class PCPBCCModule(PCPBCCBase):
                 method=m['method'],
                 path=m['path'],
                 headers=headers,
-                is_websocket_upgrade=False,
+                is_websocket_upgrade=None,
                 **tcp_ip_features
             )
         return httpMeta
@@ -425,13 +425,13 @@ class PCPBCCModule(PCPBCCBase):
         """ Store an httpMeta in cache, serialising fields when necessary """
         # Serialize headers
         t = type(httpMeta)
-        if t is HttpMetaRequest or t is HttpMetaResponse:
-            headers_str = json.dumps(httpMeta.headers)
-            httpMeta = httpMeta._replace(headers = headers_str)
+        if t is HttpMetaRequest or t is HttpMetaResponse or t is HttpMetaIncorrect:
+            self.lock.acquire()
+            self.cache.appendleft(httpMeta)
+            self.lock.release()
+            return
+        self.log("Warning, not stored (incorrect type): "+str(httpMeta))
 
-        self.lock.acquire()
-        self.cache.appendleft(httpMeta)
-        self.lock.release()
 
     def is_websocket_upgrade(self, httpMeta):
         """ Return non 0 code if the httpMeta* structure is a websocket upgrade. Return 1 for the client request and 2 for the server answer. See https://tools.ietf.org/html/rfc6455.
@@ -462,29 +462,32 @@ class PCPBCCModule(PCPBCCBase):
                     return True
             return False
 
-        if type(httpMeta) is HttpMetaIncorrect:
-            return 0, httpMeta
-        # Page 21, https://tools.ietf.org/html/rfc6455#section-4.2.1, verifying only the minimum
-        if type(httpMeta) is HttpMetaRequest:
-            if httpMeta.method == "GET":
-                headers_dict = put_header_dict_lower()
-                if header_with_value(headers_dict, "upgrade", "websocket") \
-                        and headers_dict.get("sec-websocket-key") \
-                        and headers_dict.get("sec-websocket-version"):
-                    hm2 = httpMeta._replace(is_websocket_upgrade=True)
-                    return 1, hm2
-            return 0, httpMeta
-        # Page 19, https://tools.ietf.org/html/rfc6455#section-4.1, verifying only the minimum
-        if type(httpMeta) is HttpMetaResponse:
-            if httpMeta.code == 101:
-                headers_dict = put_header_dict_lower()
-                if header_with_value(headers_dict, "upgrade", "websocket") \
-                        and header_with_value(headers_dict, "connection", "upgrade") \
-                        and headers_dict.get("sec-websocket-accept"):
-                    hm2 = httpMeta._replace(is_websocket_upgrade=True)
-                    return 2, hm2
-            return 0, httpMeta
-        self.log("is_websocket_upgrade: incorrect type of argument")
+        def perform_detection():
+            if type(httpMeta) is HttpMetaIncorrect:
+                return 0
+            # Page 21, https://tools.ietf.org/html/rfc6455#section-4.2.1, verifying only the minimum
+            if type(httpMeta) is HttpMetaRequest:
+                if httpMeta.method == "GET":
+                    headers_dict = put_header_dict_lower()
+                    if header_with_value(headers_dict, "upgrade", "websocket") \
+                            and headers_dict.get("sec-websocket-key") \
+                            and headers_dict.get("sec-websocket-version"):
+                        return 1
+                return 0
+            # Page 19, https://tools.ietf.org/html/rfc6455#section-4.1, verifying only the minimum
+            if type(httpMeta) is HttpMetaResponse:
+                if httpMeta.code == 101:
+                    headers_dict = put_header_dict_lower()
+                    if header_with_value(headers_dict, "upgrade", "websocket") \
+                            and header_with_value(headers_dict, "connection", "upgrade") \
+                            and headers_dict.get("sec-websocket-accept"):
+                        return 2
+                return 0
+            self.log("is_websocket_upgrade: incorrect type of argument")
+            return 0
+
+        code = perform_detection()
+        return code, httpMeta._replace(is_websocket_upgrade=code)
 
     # pylint: disable=bad-continuation
     def metrics(self):
@@ -591,7 +594,7 @@ class PCPBCCModule(PCPBCCBase):
                 4: lambda h: noneOnAttrErr(lambda: h.method) or noneOnAttrErr(lambda: str(h.code)) or None,
                 5: lambda h: noneOnAttrErr(lambda: h.path) or noneOnAttrErr(lambda: h.txt) or noneOnAttrErr(lambda: h.line),
                 6: lambda h: noneOnAttrErr(lambda: json.dumps(h.headers)) or noneOnAttrErr(lambda: json.dumps(h.headers)) or None,
-                7: lambda h: noneOnAttrErr(lambda: 1 if h.is_websocket_upgrade else 0)
+                7: lambda h: noneOnAttrErr(lambda: h.is_websocket_upgrade)
             }
 
             self.lock.acquire()
