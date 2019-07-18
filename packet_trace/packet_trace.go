@@ -10,7 +10,7 @@ void perf_reader_free(void *ptr);
 import "C"
 
 import (
-        "bytes"
+	"bytes"
 	"encoding/binary"
 	"fmt"
 	"github.com/google/gopacket"
@@ -32,11 +32,11 @@ var (
 	promiscuous       = false
 	timeout           = -1 * time.Second
 	handle      *pcap.Handle
-	use_one     = false
+	useOne      = false
 )
 
 func main() {
-	if use_one {
+	if useOne {
 		packetTrace1()
 	} else {
 		packetTrace2()
@@ -76,6 +76,8 @@ func packetTrace1() {
 		fmt.Fprintf(os.Stderr, "Failed to attach xdp prog: %v\n", err)
 		os.Exit(1)
 	}
+	fmt.Printf("Attached BPF programm to '%v'\n", device)
+
 	defer func() {
 		if err := module.RemoveXDP(device); err != nil {
 			fmt.Fprintf(os.Stderr, "Failed to remove XDP from %s: %v\n", device, err)
@@ -83,7 +85,7 @@ func packetTrace1() {
 		}
 	}()
 	headers := bpf.NewTable(module.TableId("headers"), module)
-	head_size := bpf.NewTable(module.TableId("head_size"), module)
+	headSize := bpf.NewTable(module.TableId("head_size"), module)
 	// Open device
 	handle, err = pcap.OpenLive(device, snapshotLen, promiscuous, timeout)
 	if err != nil {
@@ -92,29 +94,30 @@ func packetTrace1() {
 	defer handle.Close()
 	packetSource := gopacket.NewPacketSource(handle, handle.LinkType())
 	for packet := range packetSource.Packets() {
-		header_list := headers.Iter()
-		hs_list := head_size.Iter()
+		fmt.Println("Packet!")
+		headerList := headers.Iter()
+		hsList := headSize.Iter()
 		tcpLayer := packet.Layer(layers.LayerTypeTCP)
 		if tcpLayer == nil {
 			continue
 		}
 		tcp, _ := tcpLayer.(*layers.TCP)
-		fmt.Fprintf(os.Stdout, "New packet!",tcp.Seq,"\n")
-		for header_list.Next() {
-			key, leaf := header_list.Key(), header_list.Leaf()
-			leaf_val, err := headers.LeafBytesToStr(leaf)
+		fmt.Fprintf(os.Stdout, "New packet! %d \n", tcp.Seq)
+		for headerList.Next() {
+			key, leaf := headerList.Key(), headerList.Leaf()
+			leafVal, err := headers.LeafBytesToStr(leaf)
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "Failed to convert to str", err)
+				fmt.Fprintf(os.Stderr, "Failed to convert leaf_val to str: %v", err)
 				os.Exit(1)
 			}
-			leaf_int, err := strconv.ParseUint(leaf_val, 0, 32)
+			leafInt, err := strconv.ParseUint(leafVal, 0, 32)
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "Failed to convert to int", err)
+				fmt.Fprintf(os.Stderr, "Failed to convert to int %d\n", err)
 				os.Exit(1)
 			}
 			// fmt.Fprintf(os.Stdout, "seq: ", tcp.Seq, ", leaf_val: ", leaf_int, "\n")
-			if uint32(leaf_int) == tcp.Seq {
-				fmt.Fprintf(os.Stdout, "seq: ", tcp.Seq)
+			if uint32(leafInt) == tcp.Seq {
+				fmt.Fprintf(os.Stdout, "seq: %d\n", tcp.Seq)
 				applicationLayer := packet.ApplicationLayer()
 				if applicationLayer != nil {
 					fmt.Println("Application layer/Payload found.")
@@ -130,20 +133,20 @@ func packetTrace1() {
 				if err := packet.ErrorLayer(); err != nil {
 					fmt.Println("Error decoding some part of the packet:", err)
 				}
-				new_leaf, _ := headers.LeafStrToBytes("0")
-				err = headers.Set(key, new_leaf)
+				newLeaf, _ := headers.LeafStrToBytes("0")
+				err = headers.Set(key, newLeaf)
 				if err != nil {
 					fmt.Fprint(os.Stderr, "Failed to update leaf", err)
 					os.Exit(1)
 				}
 				// Should only be one
-				for hs_list.Next() {
-					key, leaf := hs_list.Key(), hs_list.Leaf()
-					leaf_str, _ := headers.LeafBytesToStr(leaf)
-					leaf_int, _ := strconv.Atoi(leaf_str)
-					leaf_int = leaf_int - 1
-					new_leaf, _ := headers.LeafStrToBytes(fmt.Sprint(leaf_int))
-					err = head_size.Set(key, new_leaf)
+				for hsList.Next() {
+					key, leaf := hsList.Key(), hsList.Leaf()
+					leafStr, _ := headers.LeafBytesToStr(leaf)
+					leafInt, _ := strconv.Atoi(leafStr)
+					leafInt = leafInt - 1
+					newLeaf, _ := headers.LeafStrToBytes(fmt.Sprint(leafInt))
+					err = headSize.Set(key, newLeaf)
 					fmt.Fprint(os.Stderr, "Failed to update leaf", err)
 				}
 			}
@@ -199,7 +202,7 @@ func packetTrace2() {
 			data := <-channel
 			err := binary.Read(bytes.NewBuffer(data), binary.LittleEndian, &event)
 			if err != nil {
-			fmt.Printf("failed to decode received data: %s\n", err)
+				fmt.Printf("failed to decode received data: %s\n", err)
 				continue
 			}
 			fmt.Printf("Got Packet with: SeqNum %d SrcIP %d DstIP %d\n",

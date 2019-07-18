@@ -7,11 +7,15 @@
 #include <linux/ip.h>
 #include <linux/ipv6.h>
 
+#define DEBUG 1
+
 BPF_ARRAY(headers,u64,256);
 //This should be optimized better probably
 BPF_ARRAY(head_size,u64,1);
 
 int xdp_prog1(struct CTXTYPE *ctx) {
+    if (DEBUG)
+      bpf_trace_printk("Got something!\n");
 
     void* data_end = (void*)(long)ctx->data_end;
     void* data = (void*)(long)ctx->data;
@@ -33,11 +37,19 @@ int xdp_prog1(struct CTXTYPE *ctx) {
         bpf_trace_printk("=== Abort 2\n");
         return XDP_PASS;
     }
+
+    if (DEBUG)
+      bpf_trace_printk("Reached IP\n");
+
     tcp_hdr = (struct tcphdr*)((u8 *)ip_hdr + ip_hdr->ihl * 4);
     if (tcp_hdr + 1 > (struct tcphdr *)data_end) {
         bpf_trace_printk("=== Abort 3\n");
         return XDP_PASS;
     }
+
+    if (DEBUG)
+      bpf_trace_printk("Reached TCP\n");
+
     hs_value = head_size.lookup(&hs_key); 
     if (!hs_value){
         bpf_trace_printk("Error, failed to look up hs_value\n");
@@ -45,6 +57,10 @@ int xdp_prog1(struct CTXTYPE *ctx) {
     }
     head_key = *hs_value;
     head_value = headers.lookup(&head_key); 
+
+    if (DEBUG)
+      bpf_trace_printk("Added to headers\n");
+
     if (!head_value){
         bpf_trace_printk("Error, failed to look up head_value\n");
         return XDP_PASS;

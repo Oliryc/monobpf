@@ -1,0 +1,476 @@
+# Copyright (C) 2019 SnT
+# Copyright (C) 2017-2018 Marko Myllynen <myllynen@redhat.com>
+# Copyright (C) 2018 Andreas Gerstmayr <andreas@gerstmayr.me>
+# Based on the tcplife module of BCC PMDA by Marko Myllynen and Andreas Gerstmayr:
+# https://github.com/iovisor/bcc/blob/master/tools/tcplife.py
+# Based on HTTP filter by Bertrone Matteo:
+# https://github.com/iovisor/bcc/tree/master/examples/networking/http_filter
+#
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 2 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+""" PCP BCC PMDA http_analysis module """
+
+# pylint: disable=invalid-name, too-few-public-methods, too-many-instance-attributes
+
+import ctypes as ct
+from collections import deque, namedtuple
+from functools import reduce
+from threading import Lock, Thread
+import time
+import socket
+import ipaddress
+from socket import inet_ntop, AF_INET, AF_INET6
+from struct import pack
+from os import path, read
+import re
+
+from bcc import BPF
+
+from pcp.pmapi import pmUnits
+from cpmapi import PM_TYPE_U32, PM_TYPE_U64, PM_TYPE_STRING, PM_SEM_INSTANT
+from cpmapi import PM_SPACE_BYTE, PM_TIME_USEC
+from cpmda import PMDA_FETCH_NOVALUES
+
+from modules.pcpbcc import PCPBCCBase
+
+# TODO:
+# - IPv6 support?
+# - Port filtering
+
+#
+# BPF program
+#
+bpf_src = "modules/http_analysis.bpf"
+# Compat with kernel < 4.16, bcc < 0.6
+
+#
+# PCP BCC PMDA constants
+#
+MODULE = 'http_analysis'
+BASENS = 'proc.io.net.http.'
+units_bytes = pmUnits(1, 0, 0, PM_SPACE_BYTE, 0, 0)
+units_usecs = pmUnits(0, 1, 0, 0, PM_TIME_USEC, 0)
+units_none = pmUnits(0, 0, 0, 0, 0, 0)
+
+# HTTP Metadata to be logged in PCP (some field may be empty)
+HttpMetaRequest = namedtuple('HttpMetaRequest', 
+                      [
+                          'src_port',
+                          'dst_port',
+                          'src_ip',
+                          'dst_ip',
+                          'method', # GET, POST…
+                          'path', # /path?key1=val1&key2=val2
+                          'headers', # List containing the headers with value
+                       ])
+HttpMetaResponse = namedtuple('HttpMetaResponse', 
+                      [
+                          'src_port',
+                          'dst_port',
+                          'src_ip',
+                          'dst_ip',
+                          'code', # 404, 200…
+                          'txt', # Not found…
+                          'headers', # List containing the headers with value
+                       ])
+# For incorrect HTTP
+HttpMetaIncorrect = namedtuple('HttpMetaIncorrect', 
+                      [
+                          'src_port',
+                          'dst_port',
+                          'src_ip',
+                          'dst_ip',
+                          'line', # Line analysed that resulted in being classified as incorrect
+                       ])
+
+CLEANUP_N_PACKETS  = 50       #run cleanup every CLEANUP_N_PACKETS packets received
+MAX_URL_STRING_LEN = 8192     #max url string len (usually 8K)
+MAX_AGE_SECONDS    = 30       #max age entry in bpf_sessions map
+
+
+#
+# PCP BCC Module
+#
+class PCPBCCModule(PCPBCCBase):
+    """ PCP BCC tcplife module """
+    def __init__(self, config, log, err, proc_refresh):
+        """ Constructor """
+        PCPBCCBase.__init__(self, MODULE, config, log, err)
+
+        self.proc_refresh = proc_refresh
+
+        # TODO Make some of these param of the config file
+        self.interface = None
+        self.dports = []
+        self.lports = []
+        self.session_count = 20
+        self.bpf_sessions = None
+        self.socket_fd = None
+        self.buffer_page_count = 64
+
+        # To extract data from HTTP packets, we will use this regex
+        http_request_or_answer = r'\A((?P<http_response>HTTP/1.1) (?P<code>\d+) (?P<txt>[^\r]*))|((?P<method>[A-Z]+) (?P<path>/\S*) (?P<http_request>HTTP/1.1)\r)\Z'
+        self.http_req_ans = re.compile(http_request_or_answer)
+
+        for opt in self.config.options(MODULE):
+            if opt == 'dport':
+                self.dports = [int(port) for port in self.config.get(MODULE, opt).split(",")]
+                self.log("Filtering on remote ports: %s." % str(self.dports))
+            if opt == 'lport':
+                self.lports = [int(port) for port in self.config.get(MODULE, opt).split(",")]
+                self.log("Filtering on local ports: %s." % str(self.lports))
+            if opt == 'interface': # Interface for the capture
+                self.interface = self.config.get(MODULE, opt)
+                self.log("Binding socket to: %s." % str(self.interface))
+
+        if not self.interface:
+            raise RuntimeError("interface is mandatory")
+
+        self.cache = deque(maxlen=self.session_count)
+        self.insts = {str(i) : ct.c_int(1) for i in range(self.session_count)}
+
+        self.lock = Lock()
+        self.thread = None
+
+        self.log("Initialized.")
+
+    #convert a bin string into a string of hex char
+    #helper function to print raw packet in hex
+    def toHex(self, s):
+        lst = []
+        for ch in s:
+            if type(ch) is int:
+                hv = hex(ch).replace('0x', '')
+            else:
+                hv = hex(ord(ch)).replace('0x', '')
+            if len(hv) == 1:
+                hv = '0'+hv
+            lst.append(hv)
+
+        return reduce(lambda x,y:x+y, lst)
+
+    def substringUntilCRLF(self, str, startChar=0):
+        """ Return substring from start to the first CRLF """
+        for k in range (startChar, len(str)-1):
+          if (str[k] == '\n'):
+            if (str[k-1] == '\r'):
+              return str[startChar:k]
+        return ""
+
+    #cleanup function
+    def cleanup(self, ):
+        #get current time in seconds
+        current_time = int(time.time())
+        #looking for leaf having:
+        #timestap  == 0        --> update with current timestamp
+        #AGE > MAX_AGE_SECONDS --> delete item
+        for key,leaf in self.bpf_sessions.items():
+          try:
+            current_leaf = self.bpf_sessions[key]
+            #set timestamp if timestamp == 0
+            if (current_leaf.timestamp == 0):
+              self.bpf_sessions[key] = self.bpf_sessions.Leaf(current_time)
+            else:
+              #delete older entries
+              if (current_time - current_leaf.timestamp > MAX_AGE_SECONDS):
+                del self.bpf_sessions[key]
+          except:
+            self.log("cleanup exception.")
+        return
+
+    def http_packet_poller(self):
+        """ IP event handler """
+        packet_count = 0
+
+        #dictionary containing association <key(ipsrc,ipdst,portsrc,portdst),payload_string>
+        #if url is not entirely contained in only one packet, save the firt part of it in this local dict
+        #when I find \r\n in a next pkt, append and print all the url
+        local_dictionary = {}
+
+        while 1:
+          #retrieve raw packet from socket
+          packet_str = read(self.socket_fd,4096) # TODO set packet length to max packet length on the interface in the config file
+          packet_count += 1
+
+          #DEBUG - print raw packet in hex format
+          #packet_hex = self.toHex(packet_str)
+          #print ("%s" % packet_hex)
+
+          #convert packet into bytearray
+          packet_bytearray = bytearray(packet_str)
+
+          #ethernet header length
+          ETH_HLEN = 14
+
+          #IP HEADER
+          #https://tools.ietf.org/html/rfc791
+          # 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
+          # +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+          # |Version|  IHL  |Type of Service|          Total Length         |
+          # +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+          #
+          #IHL : Internet Header Length is the length of the internet header
+          #value to multiply * 4 byte
+          #e.g. IHL = 5 ; IP Header Length = 5 * 4 byte = 20 byte
+          #
+          #Total length: This 16-bit field defines the entire packet size,
+          #including header and data, in bytes.
+
+          #calculate packet total length
+          total_length = packet_bytearray[ETH_HLEN + 2]               #load MSB
+          total_length = total_length << 8                            #shift MSB
+          total_length = total_length + packet_bytearray[ETH_HLEN+3]  #add LSB
+
+          #calculate ip header length
+          ip_header_length = packet_bytearray[ETH_HLEN]               #load Byte
+          ip_header_length = ip_header_length & 0x0F                  #mask bits 0..3
+          ip_header_length = ip_header_length << 2                    #shift to obtain length
+
+          #retrieve ip source/dest
+          ip_src_str = packet_str[ETH_HLEN+12:ETH_HLEN+16]                #ip source offset 12..15
+          ip_dst_str = packet_str[ETH_HLEN+16:ETH_HLEN+20]                #ip dest   offset 16..19
+
+
+          ip_src = int(self.toHex(ip_src_str),16)
+          ip_dst = int(self.toHex(ip_dst_str),16)
+
+          #TCP HEADER
+          #https://www.rfc-editor.org/rfc/rfc793.txt
+          #  12              13              14              15
+          #  0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
+          # +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+          # |  Data |           |U|A|P|R|S|F|                               |
+          # | Offset| Reserved  |R|C|S|S|Y|I|            Window             |
+          # |       |           |G|K|H|T|N|N|                               |
+          # +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+          #
+          #Data Offset: This indicates where the data begins.
+          #The TCP header is an integral number of 32 bits long.
+          #value to multiply * 4 byte
+          #e.g. DataOffset = 5 ; TCP Header Length = 5 * 4 byte = 20 byte
+
+          #calculate tcp header length
+          tcp_header_length = packet_bytearray[ETH_HLEN + ip_header_length + 12]  #load Byte
+          tcp_header_length = tcp_header_length & 0xF0                            #mask bit 4..7
+          tcp_header_length = tcp_header_length >> 2                              #SHR 4 ; SHL 2 -> SHR 2
+
+          #retrieve port source/dest
+          port_src_str = packet_str[ETH_HLEN+ip_header_length:ETH_HLEN+ip_header_length+2]
+          port_dst_str = packet_str[ETH_HLEN+ip_header_length+2:ETH_HLEN+ip_header_length+4]
+
+          port_src = int(self.toHex(port_src_str),16)
+          port_dst = int(self.toHex(port_dst_str),16)
+
+          # Gather some of the TCP stream features
+          tcp_ip_features = {'src_port': port_src, 'dst_port': port_dst,
+                             'src_ip': str(ipaddress.ip_address(ip_src)),
+                             'dst_ip': str(ipaddress.ip_address(ip_dst))}
+
+          #calculate payload offset
+          payload_offset = ETH_HLEN + ip_header_length + tcp_header_length
+
+          #payload_string contains only packet payload
+          payload_string = packet_str[(payload_offset):(len(packet_bytearray))].decode()
+
+          #CR + LF (substring to find)
+          crlf = "\r\n"
+
+          #current_Key contains ip source/dest and port source/map
+          #useful for direct bpf_sessions map access
+          current_Key = self.bpf_sessions.Key(ip_src,ip_dst,port_src,port_dst)
+
+          #looking for HTTP GET/POST request
+          if ((payload_string[:3] == "GET") or (payload_string[:4] == "POST")   or (payload_string[:4] == "HTTP")  \
+          or ( payload_string[:3] == "PUT") or (payload_string[:6] == "DELETE") or (payload_string[:4] == "HEAD") ):
+            #match: HTTP GET/POST packet found
+            if (crlf in payload_string):
+              #url entirely contained in first packet -> print it all
+              substring = self.substringUntilCRLF(payload_string)
+              self.store_in_cache(substring, tcp_ip_features)
+
+              #delete current_Key from bpf_sessions, url already printed. current session not useful anymore
+              try:
+                del self.bpf_sessions[current_Key]
+              except:
+                self.error("error during delete from bpf map ")
+            else:
+              #url NOT entirely contained in first packet
+              #not found \r\n in payload.
+              #save current part of the payload_string in dictionary <key(ips,ipd,ports,portd),payload_string>
+              local_dictionary[binascii.hexlify(current_Key)] = payload_string
+          else:
+            #NO match: HTTP GET/POST  NOT found
+
+            #check if the packet belong to a session saved in bpf_sessions
+            if (current_Key in self.bpf_sessions):
+              #check id the packet belong to a session saved in local_dictionary
+              #(local_dictionary mantains HTTP GET/POST url not printed yet because splitted in N packets)
+              if (binascii.hexlify(current_Key) in local_dictionary):
+                #first part of the HTTP GET/POST url is already present in local dictionary (prev_payload_string)
+                prev_payload_string = local_dictionary[binascii.hexlify(current_Key)]
+                #looking for CR+LF in current packet.
+                if (crlf in payload_string):
+                  #last packet. containing last part of HTTP GET/POST url splitted in N packets.
+                  #append current payload
+                  prev_payload_string += payload_string
+                  #print HTTP GET/POST url
+                  substring = self.substringUntilCRLF(payload_string)
+                  store_in_cache(substring, tcp_ip_features)
+                  #clean bpf_sessions & local_dictionary
+                  try:
+                    del self.bpf_sessions[current_Key]
+                    del local_dictionary[binascii.hexlify(current_Key)]
+                  except:
+                    print ("error deleting from map or dictionary")
+                else:
+                  #NOT last packet. containing part of HTTP GET/POST url splitted in N packets.
+                  #append current payload
+                  prev_payload_string += payload_string
+                  #check if not size exceeding (usually HTTP GET/POST url < 8K )
+                  if (len(prev_payload_string) > MAX_URL_STRING_LEN):
+                    self.log("url too long")
+                    try:
+                      del self.bpf_sessions[current_Key]
+                      del local_dictionary[binascii.hexlify(current_Key)]
+                    except:
+                      print ("error deleting from map or dict")
+                  #update dictionary
+                  local_dictionary[binascii.hexlify(current_Key)] = prev_payload_string
+              else:
+                #first part of the HTTP GET/POST url is NOT present in local dictionary
+                #bpf_sessions contains invalid entry -> delete it
+                try:
+                    del self.bpf_sessions[current_Key]
+                except Exception as e:
+                    print ("error del bpf_session: "+str(e))
+
+          #check if dirty entry are present in bpf_sessions
+          if (((packet_count) % CLEANUP_N_PACKETS) == 0):
+            self.cleanup()
+
+    def store_in_cache(self, http_line, tcp_ip_features, headers=''):
+        """ Extract data from an HTTP line like 'GET /index HTTP/1.1'
+            or 'HTTP/1.1 404 Not Found'
+        """
+        # TODO Add headers
+        httpMeta = HttpMetaIncorrect(**tcp_ip_features, line=http_line)
+        m = self.http_req_ans.match(http_line)
+        if m is None:
+            pass
+        elif (m['http_response']):
+            httpMeta = HttpMetaResponse(
+                code=int(m['code']),
+                txt=m['txt'],
+                headers=headers,
+                **tcp_ip_features,
+            )
+        elif (m['http_request']):
+            httpMeta = HttpMetaRequest(
+                method=m['method'],
+                path=m['path'],
+                headers=headers,
+                **tcp_ip_features,
+            )
+
+        self.lock.acquire()
+        self.cache.appendleft(httpMeta)
+        self.lock.release()
+
+    # pylint: disable=bad-continuation
+    def metrics(self):
+        """ Get metric definitions """
+        name = BASENS
+        self.items = (
+            # Name - reserved - type - semantics - units - help
+            (name + 'laddr', None, PM_TYPE_STRING, PM_SEM_INSTANT, units_none, 'local address'),
+            (name + 'lport', None, PM_TYPE_U32, PM_SEM_INSTANT, units_none, 'local port'),
+            (name + 'daddr', None, PM_TYPE_STRING, PM_SEM_INSTANT, units_none, 'destination '
+                                                                               'address'),
+            (name + 'dport', None, PM_TYPE_U32, PM_SEM_INSTANT, units_none, 'destination port'),
+            (name + 'identifier', None, PM_TYPE_STRING, PM_SEM_INSTANT, units_none, 'method or code'),
+            (name + 'param', None, PM_TYPE_STRING, PM_SEM_INSTANT, units_none, 'path or message'),
+            (name + 'headers', None, PM_TYPE_STRING, PM_SEM_INSTANT, units_none, 'http headers'),
+        )
+        return True, self.items
+
+    def compile(self):
+        """ Compile BPF """
+        try:
+            self.bpf = BPF(src_file=bpf_src)
+            #load eBPF program http_filter of type SOCKET_FILTER into the kernel eBPF vm
+            #more info about eBPF program types
+            #http://man7.org/linux/man-pages/man2/bpf.2.html
+            function_http_filter = self.bpf.load_func("http_filter", BPF.SOCKET_FILTER)
+            #create raw socket, bind it to interface
+            #attach bpf program to socket created
+            BPF.attach_raw_socket(function_http_filter, self.interface)
+            #get file descriptor of the socket previously created inside BPF.attach_raw_socket
+            self.socket_fd = function_http_filter.sock
+            #create python socket object, from the file descriptor
+            sock = socket.fromfd(self.socket_fd, socket.PF_PACKET, socket.SOCK_RAW, socket.IPPROTO_IP)
+            #set it as blocking socket
+            sock.setblocking(True)
+            self.bpf_sessions = self.bpf.get_table("sessions")
+
+            self.thread = Thread(name="socketpoller", target=self.http_packet_poller)
+            self.thread.setDaemon(True)
+            self.thread.start()
+            self.log("Compiled.")
+        except Exception as error: # pylint: disable=broad-except
+            self.bpf = None
+            self.err(str(error))
+            self.err("Module NOT active!")
+            raise
+
+    def refresh(self):
+        """ Refresh BPF data """
+        if self.bpf is None:
+            return None
+
+        return self.insts
+
+    def bpfdata(self, item, inst):
+        """ Return BPF data as PCP metric value """
+        def noneOnAttrErr(attribute_access_function):
+            """ Return None in case the attribute_access_function raises AttributeError """
+            try:
+                return attribute_access_function()
+            except AttributeError:
+                return None
+        try:
+            key = int(self.pmdaIndom.inst_name_lookup(inst))
+            # h stands for httpMeta, as we match an HttpMetaIncorrect,
+            # HttpMetaRequest or HttpMetaResponse object
+            key_metrics_mapping = {
+                0: lambda h: noneOnAttrErr(lambda: h.src_ip),
+                1: lambda h: noneOnAttrErr(lambda: h.src_port),
+                2: lambda h: noneOnAttrErr(lambda: h.dst_ip),
+                3: lambda h: noneOnAttrErr(lambda: h.dst_port),
+                # We are getting different type of object, we try in this order:
+                # HttpMetaRequest or HttpMetaResponse or HttpMetaIncorrect
+                4: lambda h: noneOnAttrErr(lambda: h.method) or noneOnAttrErr(lambda: str(h.code)) or None,
+                5: lambda h: noneOnAttrErr(lambda: h.path) or noneOnAttrErr(lambda: h.txt) or noneOnAttrErr(lambda: h.line),
+                6: lambda h: noneOnAttrErr(lambda: h.headers) or noneOnAttrErr(lambda: h.headers) or None,
+            }
+
+            self.lock.acquire()
+            value = key_metrics_mapping[item](self.cache[key])
+            self.lock.release()
+
+            if value is not None:
+                return [value, 1]
+            else:
+                return [PMDA_FETCH_NOVALUES, 0]
+        except Exception as e: # pylint: disable=broad-except
+            self.lock.release()
+            self.log("bpfdata Exception: "+str(e))
+            return [PMDA_FETCH_NOVALUES, 0]
+

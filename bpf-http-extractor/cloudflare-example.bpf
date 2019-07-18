@@ -9,8 +9,12 @@
 #include <linux/tcp.h>
 #include <linux/skbuff.h>
 
-#define LISTEN_PORT 8080
-#define BYTE_EXPLORE 2
+#define LISTEN_PORT 80
+#define BYTE_EXPLORE 300
+
+#include "hook.h"
+
+struct bpf_map_def xdpcap_hook = XDPCAP_HOOK();
 
 BPF_TABLE("array", int, long, dropcnt, 256);
 
@@ -23,7 +27,7 @@ static inline int match_p0f(void *data, void *data_end) {
   /*
      if (eth_hdr + 1 > (struct ethhdr *)data_end)        
      return XDP_PASS;
-     */
+   */
   struct ethhdr *eth_hdr2 = eth_hdr+1;
   bpf_trace_printk("data_end-data : %u\n", (data_end-data));
   if (eth_hdr2 > data_end){
@@ -92,20 +96,26 @@ static inline int match_p0f(void *data, void *data_end) {
     bpf_trace_printk("Long enough ===\n");
 
 
-    /*
 #pragma clang loop unroll(full)
-    for (int i=0; i<BYTE_EXPLORE; i++) {
+    for (int i=0; i<BYTE_EXPLORE; i+=4) {
+      if (http_hdr + i + 1 > (char *)data_end) {
+        bpf_trace_printk("i: %u too far\n", i);
+        return XDP_PASS;
+      }
+      bpf_trace_printk("Long enough ===\n");
       char cn = http_hdr[i];
       char c = bpf_ntohs(cn);
-      bpf_trace_printk("=-=-= Char %u", c);
+      bpf_trace_printk("=-=-= i: %u, Char %u\n", i, c);
+      /*
       if (c=='E' || c=='T' || c == 'P' || c == ' ')
         bpf_trace_printk("=-==-==-==-==-==-==-= %d: %u\n", i, http_hdr[i]);
+      */
     }
-    */
+    bpf_trace_printk("=-=- Char 1337: out of the loop\n");
 
 #pragma clang loop unroll(full)
     for (int i = 0; i<16; i++)
-      bpf_trace_printk("data: %p -> %lu\n", ((u16 *)data+i), ((u16*)data)[i]);
+      bpf_trace_printk("data: %p -> %u\n", ((u16 *)data+i), ((u16*)data)[i]);
 
     // bpf_trace_printk("sizeof(tcp_hdr->doff) = %u\n", sizeof(tcp_hdr->doff));
     // bpf_trace_printk("tcp_hdr[0]= %u\n", http_hdr[0]);
@@ -123,14 +133,14 @@ static inline int match_p0f(void *data, void *data_end) {
 }
 
 int xdp_prog1(struct xdp_md *ctx) {
-    bpf_trace_printk("Hi\n");
-    struct sk_buff sk = (struct sk_buff)ctx;
-    struct sk_buff nx_sk = (struct sk_buff)sk->next;
+    bpf_trace_printk("Hi====\n");
+    // struct sk_buff sk = (struct sk_buff)ctx;
+    // struct sk_buff nx_sk = (struct sk_buff)sk->next;
     void* data_end = (void*)(long)ctx->data_end;
     void* data = (void*)(long)ctx->data;
     bpf_trace_printk("Test %u\n", data_end - data);
     // int rc = XDP_PASS;
     int rc = match_p0f(data, data_end);
     bpf_trace_printk("Bye\n");
-    return rc;
+    return xdpcap_exit(ctx, &xdpcap_hook, rc);
 }
