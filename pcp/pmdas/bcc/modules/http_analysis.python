@@ -71,6 +71,7 @@ HttpMetaRequest = namedtuple('HttpMetaRequest',
                           'method', # GET, POST…
                           'path', # /path?key1=val1&key2=val2
                           'headers', # List containing dictionnary for key/value of HTTP headers
+                          'is_websocket_upgrade', # Is detected as websocket upgrade?
                        ])
 HttpMetaResponse = namedtuple('HttpMetaResponse', 
                       [
@@ -81,6 +82,7 @@ HttpMetaResponse = namedtuple('HttpMetaResponse',
                           'code', # 404, 200…
                           'txt', # Not found…
                           'headers', # List containing dictionnary for key/value of HTTP headers
+                          'is_websocket_upgrade', # Is detected as websocket upgrade?
                        ])
 # For incorrect HTTP
 HttpMetaIncorrect = namedtuple('HttpMetaIncorrect', 
@@ -312,8 +314,9 @@ class PCPBCCModule(PCPBCCBase):
               # TODO Make detection of ws configurable
               # XXX Find a way to log this for PCP
               #  self.log("is_websocket_upgrade "+str(self.is_websocket_upgrade(httpMeta)))
-              if self.is_websocket_upgrade(httpMeta):
-                  self.log("======================== \/\/ ,/’ "+str(self.is_websocket_upgrade(httpMeta)))
+              i, httpMeta2 = self.is_websocket_upgrade(httpMeta)
+              if i:
+                  self.log("======================== \/\/ ,/’ "+str(i))
 
               #delete current_Key from bpf_sessions, url already printed. current session not useful anymore
               try:
@@ -405,6 +408,7 @@ class PCPBCCModule(PCPBCCBase):
                 code=int(m['code']),
                 txt=m['txt'],
                 headers=headers,
+                is_websocket_upgrade=False,
                 **tcp_ip_features
             )
         elif (m['http_request']):
@@ -412,6 +416,7 @@ class PCPBCCModule(PCPBCCBase):
                 method=m['method'],
                 path=m['path'],
                 headers=headers,
+                is_websocket_upgrade=False,
                 **tcp_ip_features
             )
         return httpMeta
@@ -429,7 +434,9 @@ class PCPBCCModule(PCPBCCBase):
         self.lock.release()
 
     def is_websocket_upgrade(self, httpMeta):
-        """ Return non 0 code if the httpMeta* structure is a websocket upgrade. Return 1 for the client request and 2 for the server answer. See https://tools.ietf.org/html/rfc6455 """
+        """ Return non 0 code if the httpMeta* structure is a websocket upgrade. Return 1 for the client request and 2 for the server answer. See https://tools.ietf.org/html/rfc6455.
+            The second return is the updated httpMeta
+        """
         def put_header_dict_lower():
             """ Put all in one dictionary, with lower case key as they are case insensitive according to RFC. Account for the fact that key may be duplicated """
             headers_dict = {}
@@ -456,7 +463,7 @@ class PCPBCCModule(PCPBCCBase):
             return False
 
         if type(httpMeta) is HttpMetaIncorrect:
-            return 0
+            return 0, httpMeta
         # Page 21, https://tools.ietf.org/html/rfc6455#section-4.2.1, verifying only the minimum
         if type(httpMeta) is HttpMetaRequest:
             if httpMeta.method == "GET":
@@ -464,8 +471,9 @@ class PCPBCCModule(PCPBCCBase):
                 if header_with_value(headers_dict, "upgrade", "websocket") \
                         and headers_dict.get("sec-websocket-key") \
                         and headers_dict.get("sec-websocket-version"):
-                    return 1
-            return 0
+                    hm2 = httpMeta._replace(is_websocket_upgrade=True)
+                    return 1, hm2
+            return 0, httpMeta
         # Page 19, https://tools.ietf.org/html/rfc6455#section-4.1, verifying only the minimum
         if type(httpMeta) is HttpMetaResponse:
             if httpMeta.code == 101:
@@ -473,10 +481,10 @@ class PCPBCCModule(PCPBCCBase):
                 if header_with_value(headers_dict, "upgrade", "websocket") \
                         and header_with_value(headers_dict, "connection", "upgrade") \
                         and headers_dict.get("sec-websocket-accept"):
-                    return 2
-            return 0
+                    hm2 = httpMeta._replace(is_websocket_upgrade=True)
+                    return 2, hm2
+            return 0, httpMeta
         self.log("is_websocket_upgrade: incorrect type of argument")
-        return 0
 
     # pylint: disable=bad-continuation
     def metrics(self):
@@ -581,7 +589,7 @@ class PCPBCCModule(PCPBCCBase):
                 # HttpMetaRequest or HttpMetaResponse or HttpMetaIncorrect
                 4: lambda h: noneOnAttrErr(lambda: h.method) or noneOnAttrErr(lambda: str(h.code)) or None,
                 5: lambda h: noneOnAttrErr(lambda: h.path) or noneOnAttrErr(lambda: h.txt) or noneOnAttrErr(lambda: h.line),
-                6: lambda h: noneOnAttrErr(lambda: h.headers) or noneOnAttrErr(lambda: h.headers) or None,
+                6: lambda h: noneOnAttrErr(lambda: json.dumps(h.headers)) or noneOnAttrErr(lambda: json.dumps(h.headers)) or None,
             }
 
             self.lock.acquire()
