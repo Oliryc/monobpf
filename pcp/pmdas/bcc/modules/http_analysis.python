@@ -115,7 +115,7 @@ class PCPBCCModule(PCPBCCBase):
         self.sports = []
         self.ports = []
         self.ips = []
-
+        self.max_packet_length = 4096 # max packet length on the interface in the config file
         self.session_count = 20
         self.debug = False
         self.bpf_sessions = None
@@ -217,7 +217,7 @@ class PCPBCCModule(PCPBCCBase):
 
         while 1:
           #retrieve raw packet from socket
-          packet_str = read(self.socket_fd,4096) # TODO set packet length to max packet length on the interface in the config file
+          packet_str = read(self.socket_fd, self.max_packet_length)
           packet_count += 1
 
           #DEBUG - print raw packet in hex format
