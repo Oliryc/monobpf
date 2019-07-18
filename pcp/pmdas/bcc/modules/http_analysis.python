@@ -117,6 +117,7 @@ class PCPBCCModule(PCPBCCBase):
         self.interface = None
         self.dports = []
         self.sports = []
+        self.ports = []
         self.session_count = 20
         self.bpf_sessions = None
         self.socket_fd = None
@@ -128,6 +129,9 @@ class PCPBCCModule(PCPBCCBase):
         self.http_req_ans = re.compile(http_request_or_answer)
 
         for opt in self.config.options(MODULE):
+            if opt == 'port':
+                self.ports = [int(port) for port in self.config.get(MODULE, opt).split(",")]
+                self.log("Filtering on local or remote ports: %s." % str(self.sports))
             if opt == 'dport':
                 self.dports = [int(port) for port in self.config.get(MODULE, opt).split(",")]
                 self.log("Filtering on remote ports: %s." % str(self.dports))
@@ -481,6 +485,12 @@ class PCPBCCModule(PCPBCCBase):
                 with open(path.dirname(__file__) + '/../' + bpf_src) as src:
                     self.bpf_text = src.read()
 
+                if self.ports:
+                    filterp_dst = " && ".join(["key.dst_port != %d" % port for port in self.ports])
+                    filterp_src = " && ".join(["key.src_port != %d" % port for port in self.ports])
+                    filterp = " && ".join(["(%s)" % filt for filt in [filterp_dst, filterp_src]])
+                    filter_txt = "if (%s) { goto DROP; }" % filterp
+                    self.bpf_text = self.bpf_text.replace("//FILTER_LDPORT", filter_txt)
                 if self.dports:
                     filterp = " && ".join(["key.dst_port != %d" % port for port in self.dports])
                     filter_txt = "if (%s) { goto DROP; }" % filterp
