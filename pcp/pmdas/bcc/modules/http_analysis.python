@@ -27,6 +27,7 @@ from threading import Lock, Thread
 import time
 import socket
 import ipaddress
+import binascii
 from socket import inet_ntop, AF_INET, AF_INET6
 from struct import pack
 from os import path, read
