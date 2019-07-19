@@ -298,7 +298,7 @@ class PCPBCCModule(PCPBCCBase):
           payload_offset = ETH_HLEN + ip_header_length + tcp_header_length
 
           #payload_string contains only packet payload
-          payload_string = packet_str[(payload_offset):(len(packet_bytearray))].decode()
+          payload_string = packet_str[(payload_offset):(len(packet_bytearray))].decode(errors='replace')
 
           #current_Key contains ip source/dest and port source/map
           #useful for direct bpf_sessions map access
