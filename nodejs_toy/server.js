@@ -34,6 +34,6 @@ wsSrv.on('request', function(request) {
   });
 
   connection.on('close', function(connection) {
-    // close user connection
+    console.log("A client closed his connection");
   });
 });

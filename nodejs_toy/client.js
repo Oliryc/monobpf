@@ -10,6 +10,11 @@ client.on('connectFailed', function(error) {
 });
 
 client.on('connect', function(connection) {
+    // Number of message to be sent
+    var msgNumber = 10;
+    // Number of received message
+    var msgReceived = 0;
+
     console.log('WebSocket Client Connected');
     connection.on('error', function(error) {
         console.log("Connection Error: " + error.toString());
@@ -20,26 +25,39 @@ client.on('connect', function(connection) {
     connection.on('message', function(message) {
         if (message.type === 'utf8') {
             console.log("Received: '" + message.utf8Data + "'");
+            msgReceived = msgReceived + 1;
         }
     });
     
     function sendNumber() {
         if (connection.connected) {
-            var times = 10;
-            console.log("out");
-            for (var t = 1; t <= times; t++) {
-              console.log("in");
+            for (var t = 1; t <= msgNumber; t++) {
               // var number = Math.round(Math.random() * 0xFFFFFF);
               connection.sendUTF(t.toString());
-              console.log(t, "/", times, " sent");
+              console.log(t, "/", msgNumber, " sent");
             }
-            // setTimeout(sendNumber, 1000);
         }
     }
     sendNumber();
+    console.log("=======");
+    function closeWait() {
+        if (msgReceived < msgNumber) {
+          console.log("Waiting for response (got "+msgReceived+"/"+msgNumber+")")
+          setTimeout(closeWait, 1000)
+        } else {
+          console.log("Got message "+msgReceived+"/"+msgNumber+", closing connection")
+          connection.close();
+        }
+     }
+     closeWait();
 });
 
 var wsUrl = process.argv[2];
 console.log("Connecting to", wsUrl);
-client.connect(wsUrl, null);
+
+var requestOptions = {
+  closeTimeout: 10000
+};
+
+client.connect(wsUrl, null, null, null, requestOptions);
 
