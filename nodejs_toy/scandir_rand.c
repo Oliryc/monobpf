@@ -9,9 +9,9 @@
 #include <stdlib.h>
 
 // Probability to be slow
-#define SLOW_PROBA   0.05
-// Duration of the sleep time in the middle of the call
-#define SLEEP_DURATION   30
+#define SLOW_PROBA   0.1
+// Duration of the sleep time in the middle of the call (μsec)
+#define SLEEP_DURATION   1500*1000
 
 // Randomly slow scandir
 int scandir64(const char * dirp, struct dirent64 ** * namelist, int( * filter)(const struct dirent64 * ), int( * compar)(const struct dirent64 ** ,
@@ -27,7 +27,7 @@ int scandir64(const char * dirp, struct dirent64 ** * namelist, int( * filter)(c
     int r = rand();
     if (r < RAND_MAX*SLOW_PROBA) {
       printf("Slow system call waiting...\n");
-      sleep(SLEEP_DURATION);
+      usleep(SLEEP_DURATION);
       printf("Slow system call wait finished\n");
     } else {
       printf("Normal system call\n");
