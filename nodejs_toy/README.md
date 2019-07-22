@@ -47,3 +47,10 @@ http://localhost:3000/?q=%5B%7B%22p%22:%22http%22,%22h%22:%22localhost:44323%22,
   > {"type": "echo", "payload": 1}
 
 with https://github.com/hashrocket/ws
+
+### Complete example
+
+```
+make; env UV_THREADPOOL_SIZE=2 LD_PRELOAD=./scandir_rand.so node server.js
+node client.js ws://localhost:7777/
+```
