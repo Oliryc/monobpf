@@ -39,7 +39,7 @@ npm install websocket
 
 ### Vector
 
-http://localhost:3000/?q=%5B%7B%22p%22:%22http%22,%22h%22:%22localhost:44323%22,%22hs%22:%22localhost%22,%22ci%22:%22_all%22,%22cl%22:%5B%22bcc-biolatency%22,%22bcc-gclatency%22,%22bcc-tcplife%22,%22bcc-http-analysis%22%5D%7D%5D
+[These graph are useful](http://localhost:3000/?q=[{%22p%22:%22http%22,%22h%22:%22localhost:44323%22,%22hs%22:%22localhost%22,%22ci%22:%22_all%22,%22cl%22:[%22bcc-tcplife-duration%22,%22bcc-gclatency%22,%22bcc-http-analysis%22,%22bcc-tcplife%22]}])
 
 ### To test
 

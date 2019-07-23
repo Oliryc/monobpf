@@ -27,7 +27,6 @@ from threading import Lock, Thread
 import time
 import socket
 import ipaddress
-import binascii
 from socket import inet_ntop, AF_INET, AF_INET6
 from struct import pack
 from os import path, read
@@ -321,8 +320,11 @@ class PCPBCCModule(PCPBCCBase):
 
               #delete current_Key from bpf_sessions, url already printed. current session not useful anymore
               try:
-                del self.bpf_sessions[current_Key]
-              except:
+                  if current_Key in self.bpf_sessions:
+                    del self.bpf_sessions[current_Key]
+                  else:
+                      self.log("Error deleting key from bpf map, kex absent")
+              except Exception as e:
                 self.error("error during delete from bpf map ")
             else:
               #url NOT entirely contained in first packet
