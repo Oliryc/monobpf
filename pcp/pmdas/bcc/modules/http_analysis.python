@@ -32,6 +32,7 @@ from struct import pack
 from os import path, read
 import re
 import json
+import binascii
 
 from bcc import BPF
 
@@ -110,6 +111,7 @@ class PCPBCCModule(PCPBCCBase):
 
         self.proc_refresh = proc_refresh
 
+        self.deduplicate = False
         self.interface = None
         self.dports = []
         self.sports = []
@@ -145,6 +147,13 @@ class PCPBCCModule(PCPBCCBase):
                 self.detect_ws = int(self.config.get(MODULE, opt)) > 0
                 s = "Detection of websocket handshake is " 
                 if self.detect_ws:
+                    self.log(s+"enabled")
+                else:
+                    self.log(s+"disabled")
+            if opt == 'deduplicate':
+                self.deduplicate = int(self.config.get(MODULE, opt)) > 0
+                s = "Removal of consecutive duplicated packets is " 
+                if self.deduplicate:
                     self.log(s+"enabled")
                 else:
                     self.log(s+"disabled")
@@ -314,8 +323,6 @@ class PCPBCCModule(PCPBCCBase):
               httpMeta = self.in_httpMeta(first_line, tcp_ip_features, headers)
               if self.detect_ws:
                   i, httpMeta = self.is_websocket_upgrade(httpMeta)
-                  if i:
-                      self.log("======================== \/\/ ,/’ "+str(i))
               self.store_in_cache(httpMeta)
 
               #delete current_Key from bpf_sessions, url already printed. current session not useful anymore
@@ -323,7 +330,7 @@ class PCPBCCModule(PCPBCCBase):
                   if current_Key in self.bpf_sessions:
                     del self.bpf_sessions[current_Key]
                   else:
-                      self.log("Error deleting key from bpf map, kex absent")
+                      self.log("error deleting key from bpf map, key absent")
               except Exception as e:
                 self.error("error during delete from bpf map ")
             else:
@@ -430,7 +437,10 @@ class PCPBCCModule(PCPBCCBase):
         t = type(httpMeta)
         if t is HttpMetaRequest or t is HttpMetaResponse or t is HttpMetaIncorrect:
             self.lock.acquire()
-            self.cache.appendleft(httpMeta)
+            if self.deduplicate and len(self.cache) > 0 and self.cache[0] == httpMeta:
+                pass
+            else:
+                self.cache.appendleft(httpMeta)
             self.lock.release()
             return
         self.log("Warning, not stored (incorrect type): "+str(httpMeta))
