@@ -58,43 +58,41 @@ units_bytes = pmUnits(1, 0, 0, PM_SPACE_BYTE, 0, 0)
 units_usecs = pmUnits(0, 1, 0, 0, PM_TIME_USEC, 0)
 units_none = pmUnits(0, 0, 0, 0, 0, 0)
 
+tcpIpMetaFields = [
+    'src_port',
+    'dst_port',
+    'src_ip',
+    'dst_ip',
+    'tcp_checksum', # Used mainly to deduplicate packets
+]
+TcpIpMeta = namedtuple('TcpIpMeta', tcpIpMetaFields)
 # HTTP Metadata that could be logged in PCP (some field may be empty). Note:
 # headers are in a list because we need to be able to show duplicated key
 # headers. Will be serialised as JSON array.
-HttpMetaRequest = namedtuple('HttpMetaRequest', 
-                      [
-                          'src_port',
-                          'dst_port',
-                          'src_ip',
-                          'dst_ip',
-                          'tcp_checksum', # Used mainly to deduplicate packets
-                          'method', # GET, POST…
-                          'path', # /path?key1=val1&key2=val2
-                          'headers', # List containing dictionnary for key/value of HTTP headers
-                          'is_websocket_upgrade', # Is detected as websocket upgrade? None if no detection attempt, 0 if not an upgrade, 1 if client side of the handshake, 2 for server side
-                       ])
-HttpMetaResponse = namedtuple('HttpMetaResponse', 
-                      [
-                          'src_port',
-                          'dst_port',
-                          'src_ip',
-                          'dst_ip',
-                          'tcp_checksum', # Idem
-                          'code', # 404, 200…
-                          'txt', # Not found…
-                          'headers', # List containing dictionnary for key/value of HTTP headers
-                          'is_websocket_upgrade', # Idem
-                       ])
+httpMetaRequestFields = tcpIpMetaFields[:]
+httpMetaRequestFields.extend([
+    'method', # GET, POST…
+    'path', # /path?key1=val1&key2=val2
+    'headers', # List containing dictionnary for key/value of HTTP headers
+    'is_websocket_upgrade', # Is detected as websocket upgrade? None if no detection attempt, 0 if not an upgrade, 1 if client side of the handshake, 2 for server side
+])
+HttpMetaRequest = namedtuple('HttpMetaRequest', httpMetaRequestFields)
+
+httpMetaResponseFields = tcpIpMetaFields[:]
+httpMetaResponseFields.extend([
+    'code', # 404, 200…
+    'txt', # Not found…
+    'headers', # List containing dictionnary for key/value of HTTP headers
+    'is_websocket_upgrade', # Idem
+])
+HttpMetaResponse = namedtuple('HttpMetaResponse', httpMetaResponseFields)
+
 # For incorrect HTTP
-HttpMetaIncorrect = namedtuple('HttpMetaIncorrect', 
-                      [
-                          'src_port',
-                          'dst_port',
-                          'src_ip',
-                          'dst_ip',
-                          'tcp_checksum', # Idem
-                          'line', # Line analysed that resulted in being classified as incorrect
-                       ])
+httpMetaIncorrectFields = tcpIpMetaFields[:]
+httpMetaIncorrectFields.extend([
+    'line', # Line analysed that resulted in being classified as incorrect
+])
+HttpMetaIncorrect = namedtuple('HttpMetaIncorrect', httpMetaIncorrectFields)
 
 CLEANUP_N_PACKETS  = 50       #run cleanup every CLEANUP_N_PACKETS packets received
 MAX_URL_STRING_LEN = 8192     #max url string len (usually 8K)
@@ -313,10 +311,10 @@ class PCPBCCModule(PCPBCCBase):
           checksum = packet_bytearray[ETH_HLEN + ip_header_length + 16:ETH_HLEN + ip_header_length + 18]
 
           # Gather some of the TCP stream features
-          tcp_ip_features = {'src_port': port_src, 'dst_port': port_dst,
-                             'src_ip': str(ipaddress.ip_address(ip_src)),
-                             'dst_ip': str(ipaddress.ip_address(ip_dst)),
-                             'tcp_checksum': checksum}
+          tcpIpMeta = TcpIpMeta(src_port=port_src, dst_port=port_dst,
+                             src_ip=str(ipaddress.ip_address(ip_src)),
+                             dst_ip=str(ipaddress.ip_address(ip_dst)),
+                             tcp_checksum=checksum)
 
           #calculate payload offset
           payload_offset = ETH_HLEN + ip_header_length + tcp_header_length
@@ -335,7 +333,7 @@ class PCPBCCModule(PCPBCCBase):
             if (CRLF in payload_string):
               #url entirely contained in first packet -> print it all
               (first_line, headers) = self.first_line_and_headers(payload_string)
-              httpMeta = self.in_httpMeta(first_line, tcp_ip_features, headers)
+              httpMeta = self.in_httpMeta(first_line, tcpIpMeta, headers)
               if self.detect_ws:
                   i, httpMeta = self.is_websocket_upgrade(httpMeta)
               self.store_in_cache(httpMeta)
@@ -370,7 +368,7 @@ class PCPBCCModule(PCPBCCBase):
                   prev_payload_string += payload_string
                   #print HTTP GET/POST url
                   substring = self.substringUntilCRLF(payload_string)
-                  self.store_in_cache(substring, tcp_ip_features)
+                  self.store_in_cache(substring, tcpIpMeta)
                   #clean bpf_sessions & local_dictionary
                   try:
                     del self.bpf_sessions[current_Key]
@@ -420,29 +418,43 @@ class PCPBCCModule(PCPBCCBase):
         ))
         return lines[0], headers
 
-    def in_httpMeta(self, http_line, tcp_ip_features, headers=[]):
+    def in_httpMeta(self, http_line, tcpIpMeta, headers=[]):
         """ Extract data from an HTTP line like 'GET /index HTTP/1.1'
             or 'HTTP/1.1 404 Not Found' in an httpMeta* object
         """
-        httpMeta = HttpMetaIncorrect(line=http_line, **tcp_ip_features)
+        httpMeta = HttpMetaIncorrect(line=http_line,
+                                     src_port=tcpIpMeta.src_port,
+                                     dst_port=tcpIpMeta.dst_port,
+                                     src_ip=tcpIpMeta.src_ip,
+                                     dst_ip=tcpIpMeta.dst_ip,
+                                     tcp_checksum=tcpIpMeta.tcp_checksum,
+                                     )
         m = self.http_req_ans.match(http_line)
         if m is None:
             pass
         elif (m['http_response']):
             httpMeta = HttpMetaResponse(
+                src_port=tcpIpMeta.src_port,
+                dst_port=tcpIpMeta.dst_port,
+                src_ip=tcpIpMeta.src_ip,
+                dst_ip=tcpIpMeta.dst_ip,
+                tcp_checksum=tcpIpMeta.tcp_checksum,
                 code=int(m['code']),
                 txt=m['txt'],
                 headers=headers,
                 is_websocket_upgrade=None,
-                **tcp_ip_features
             )
         elif (m['http_request']):
             httpMeta = HttpMetaRequest(
+                src_port=tcpIpMeta.src_port,
+                dst_port=tcpIpMeta.dst_port,
+                src_ip=tcpIpMeta.src_ip,
+                dst_ip=tcpIpMeta.dst_ip,
+                tcp_checksum=tcpIpMeta.tcp_checksum,
                 method=m['method'],
                 path=m['path'],
                 headers=headers,
                 is_websocket_upgrade=None,
-                **tcp_ip_features
             )
         return httpMeta
 
