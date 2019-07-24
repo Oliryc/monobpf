@@ -312,7 +312,7 @@ class PCPBCCModule(PCPBCCBase):
           # +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 
           #  checksum = packet_bytearray[ETH_HLEN + ip_header_length + 16:ETH_HLEN + ip_header_length + 18]
-          checksum = hash(packet_bytearray[payload_offset:].hex())
+          checksum = hash(packet_bytearray[payload_offset:].hex()) if self.deduplicate else None
 
           # Gather some of the TCP stream features
           tcpIpMeta = TcpIpMeta(src_port=port_src, dst_port=port_dst,
