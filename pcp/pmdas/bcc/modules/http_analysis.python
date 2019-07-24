@@ -63,7 +63,7 @@ tcpIpMetaFields = [
     'dst_port',
     'src_ip',
     'dst_ip',
-    'tcp_checksum', # Used mainly to deduplicate packets
+    'tcp_data_checksum', # Used mainly to deduplicate packets
 ]
 TcpIpMeta = namedtuple('TcpIpMeta', tcpIpMetaFields)
 # HTTP Metadata that could be logged in PCP (some field may be empty). Note:
@@ -301,23 +301,24 @@ class PCPBCCModule(PCPBCCBase):
           port_src = int(self.toHex(port_src_str),16)
           port_dst = int(self.toHex(port_dst_str),16)
 
-          # Retrieve checksum
+          #calculate payload offset
+          payload_offset = ETH_HLEN + ip_header_length + tcp_header_length
+
+          # TCP checksum is often offloaded to hardware and we get an unreliable value
           #  16              17              18              19
           #  0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
           # +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
           # |           Checksum            |         Urgent Pointer        |
           # +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 
-          checksum = packet_bytearray[ETH_HLEN + ip_header_length + 16:ETH_HLEN + ip_header_length + 18]
+          #  checksum = packet_bytearray[ETH_HLEN + ip_header_length + 16:ETH_HLEN + ip_header_length + 18]
+          checksum = hash(packet_bytearray[payload_offset:].hex())
 
           # Gather some of the TCP stream features
           tcpIpMeta = TcpIpMeta(src_port=port_src, dst_port=port_dst,
                              src_ip=str(ipaddress.ip_address(ip_src)),
                              dst_ip=str(ipaddress.ip_address(ip_dst)),
-                             tcp_checksum=checksum)
-
-          #calculate payload offset
-          payload_offset = ETH_HLEN + ip_header_length + tcp_header_length
+                             tcp_data_checksum=checksum)
 
           #payload_string contains only packet payload
           payload_string = packet_str[(payload_offset):(len(packet_bytearray))].decode(errors='replace')
@@ -427,7 +428,7 @@ class PCPBCCModule(PCPBCCBase):
                                      dst_port=tcpIpMeta.dst_port,
                                      src_ip=tcpIpMeta.src_ip,
                                      dst_ip=tcpIpMeta.dst_ip,
-                                     tcp_checksum=tcpIpMeta.tcp_checksum,
+                                     tcp_data_checksum=tcpIpMeta.tcp_data_checksum,
                                      )
         m = self.http_req_ans.match(http_line)
         if m is None:
@@ -438,7 +439,7 @@ class PCPBCCModule(PCPBCCBase):
                 dst_port=tcpIpMeta.dst_port,
                 src_ip=tcpIpMeta.src_ip,
                 dst_ip=tcpIpMeta.dst_ip,
-                tcp_checksum=tcpIpMeta.tcp_checksum,
+                tcp_data_checksum=tcpIpMeta.tcp_data_checksum,
                 code=int(m['code']),
                 txt=m['txt'],
                 headers=headers,
@@ -450,7 +451,7 @@ class PCPBCCModule(PCPBCCBase):
                 dst_port=tcpIpMeta.dst_port,
                 src_ip=tcpIpMeta.src_ip,
                 dst_ip=tcpIpMeta.dst_ip,
-                tcp_checksum=tcpIpMeta.tcp_checksum,
+                tcp_data_checksum=tcpIpMeta.tcp_data_checksum,
                 method=m['method'],
                 path=m['path'],
                 headers=headers,
@@ -464,7 +465,7 @@ class PCPBCCModule(PCPBCCBase):
         t = type(httpMeta)
         if t is HttpMetaRequest or t is HttpMetaResponse or t is HttpMetaIncorrect:
             self.lock.acquire()
-            if self.deduplicate and len(self.cache) > 0 and self.cache[0].tcp_checksum == httpMeta.tcp_checksum:
+            if self.deduplicate and len(self.cache) > 0 and self.cache[0].tcp_data_checksum == httpMeta.tcp_data_checksum:
                 pass
             else:
                 self.cache.appendleft(httpMeta)
