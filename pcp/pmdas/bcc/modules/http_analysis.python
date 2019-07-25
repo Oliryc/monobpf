@@ -119,6 +119,7 @@ class PCPBCCModule(PCPBCCBase):
         self.dports = []
         self.sports = []
         self.ports = []
+        self.nports = []
         self.ips = []
         self.max_packet_length = 4096 # max packet length on the interface in the config file
         self.session_count = 20
@@ -136,6 +137,9 @@ class PCPBCCModule(PCPBCCBase):
             if opt == 'port':
                 self.ports = [int(port) for port in self.config.get(MODULE, opt).split(",")]
                 self.log("Filtering on local or remote ports: %s." % str(self.sports))
+            if opt == 'nport':
+                self.nports = [int(port) for port in self.config.get(MODULE, opt).split(",")]
+                self.log("Filtering on local or remote ports different of: %s." % str(self.sports))
             if opt == 'dport':
                 self.dports = [int(port) for port in self.config.get(MODULE, opt).split(",")]
                 self.log("Filtering on remote ports: %s." % str(self.dports))
@@ -559,6 +563,12 @@ class PCPBCCModule(PCPBCCBase):
                     filterp_dst = " && ".join(["key.dst_port != %d" % port for port in self.ports])
                     filterp_src = " && ".join(["key.src_port != %d" % port for port in self.ports])
                     filterp = " && ".join(["(%s)" % filt for filt in [filterp_dst, filterp_src]])
+                    filter_txt = "if (%s) { goto DROP; }" % filterp
+                    self.bpf_text = self.bpf_text.replace("//FILTER_LDPORT", filter_txt)
+                if self.nports:
+                    filterp_dst = " || ".join(["key.dst_port == %d" % port for port in self.nports])
+                    filterp_src = " || ".join(["key.src_port == %d" % port for port in self.nports])
+                    filterp = " || ".join(["(%s)" % filt for filt in [filterp_dst, filterp_src]])
                     filter_txt = "if (%s) { goto DROP; }" % filterp
                     self.bpf_text = self.bpf_text.replace("//FILTER_LDPORT", filter_txt)
                 if self.dports:
