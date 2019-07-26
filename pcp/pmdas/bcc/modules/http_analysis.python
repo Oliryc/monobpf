@@ -179,9 +179,9 @@ class PCPBCCModule(PCPBCCBase):
 
         self.log("Initialized.")
 
-    #convert a bin string into a string of hex char
-    #helper function to print raw packet in hex
     def toHex(self, s):
+        """ Convert a bin string into a string of hex char. Could be used to
+        print raw packets """
         lst = []
         for ch in s:
             if type(ch) is int:
@@ -201,22 +201,19 @@ class PCPBCCModule(PCPBCCBase):
               return l[0]
         return ""
 
-    #cleanup function
     def cleanup(self, ):
-        #get current time in seconds
         current_time = int(time.time())
-        #looking for leaf having:
-        #timestap  == 0        --> update with current timestamp
-        #AGE > MAX_AGE_SECONDS --> delete item
+        # for leaf having, do:
+        # timestap  == 0        --> update with current timestamp
+        # AGE > MAX_AGE_SECONDS --> delete older item
         for key,leaf in self.bpf_sessions.items():
           try:
             current_leaf = self.bpf_sessions[key]
-            #set timestamp if timestamp == 0
             if (current_leaf.timestamp == 0):
               self.bpf_sessions[key] = self.bpf_sessions.Leaf(current_time)
             else:
-              #delete older entries
-              if (current_time - current_leaf.timestamp > MAX_AGE_SECONDS):
+              age = current_time - current_leaf.timestamp
+              if (age > MAX_AGE_SECONDS):
                 del self.bpf_sessions[key]
           except:
             self.log("cleanup exception.")
@@ -236,11 +233,10 @@ class PCPBCCModule(PCPBCCBase):
           packet_str = read(self.socket_fd, self.max_packet_length)
           packet_count += 1
 
-          #DEBUG - print raw packet in hex format
-          #packet_hex = self.toHex(packet_str)
-          #print ("%s" % packet_hex)
+          if self.debug:
+              packet_hex = self.toHex(packet_str)
+              self.log("RAW PACKET\n%s" % packet_hex)
 
-          #convert packet into bytearray
           packet_bytearray = bytearray(packet_str)
 
           #ethernet header length
@@ -260,21 +256,16 @@ class PCPBCCModule(PCPBCCBase):
           #Total length: This 16-bit field defines the entire packet size,
           #including header and data, in bytes.
 
-          #calculate packet total length
           total_length = packet_bytearray[ETH_HLEN + 2]               #load MSB
           total_length = total_length << 8                            #shift MSB
           total_length = total_length + packet_bytearray[ETH_HLEN+3]  #add LSB
 
-          #calculate ip header length
           ip_header_length = packet_bytearray[ETH_HLEN]               #load Byte
           ip_header_length = ip_header_length & 0x0F                  #mask bits 0..3
           ip_header_length = ip_header_length << 2                    #shift to obtain length
 
-          #retrieve ip source/dest
           ip_src_str = packet_str[ETH_HLEN+12:ETH_HLEN+16]                #ip source offset 12..15
           ip_dst_str = packet_str[ETH_HLEN+16:ETH_HLEN+20]                #ip dest   offset 16..19
-
-
           ip_src = int(self.toHex(ip_src_str),16)
           ip_dst = int(self.toHex(ip_dst_str),16)
 
@@ -293,19 +284,15 @@ class PCPBCCModule(PCPBCCBase):
           #value to multiply * 4 byte
           #e.g. DataOffset = 5 ; TCP Header Length = 5 * 4 byte = 20 byte
 
-          #calculate tcp header length
           tcp_header_length = packet_bytearray[ETH_HLEN + ip_header_length + 12]  #load Byte
           tcp_header_length = tcp_header_length & 0xF0                            #mask bit 4..7
           tcp_header_length = tcp_header_length >> 2                              #SHR 4 ; SHL 2 -> SHR 2
 
-          #retrieve port source/dest
           port_src_str = packet_str[ETH_HLEN+ip_header_length:ETH_HLEN+ip_header_length+2]
           port_dst_str = packet_str[ETH_HLEN+ip_header_length+2:ETH_HLEN+ip_header_length+4]
-
           port_src = int(self.toHex(port_src_str),16)
           port_dst = int(self.toHex(port_dst_str),16)
 
-          #calculate payload offset
           payload_offset = ETH_HLEN + ip_header_length + tcp_header_length
 
           # TCP checksum is often offloaded to hardware and we get an unreliable value
@@ -318,7 +305,6 @@ class PCPBCCModule(PCPBCCBase):
           #  checksum = packet_bytearray[ETH_HLEN + ip_header_length + 16:ETH_HLEN + ip_header_length + 18]
           checksum = hash(packet_bytearray[payload_offset:].hex()) if self.deduplicate else None
 
-          # Gather some of the TCP stream features
           tcpIpMeta = TcpIpMeta(src_port=port_src, dst_port=port_dst,
                              src_ip=str(ipaddress.ip_address(ip_src)),
                              dst_ip=str(ipaddress.ip_address(ip_dst)),
