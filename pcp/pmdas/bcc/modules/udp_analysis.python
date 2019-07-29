@@ -16,7 +16,7 @@
 # MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 # GNU General Public License for more details.
 #
-""" PCP BCC PMDA http_analysis module """
+""" PCP BCC PMDA udp_analysis module """
 
 # pylint: disable=invalid-name, too-few-public-methods, too-many-instance-attributes
 
@@ -46,30 +46,30 @@ from modules.pcpbcc import PCPBCCBase
 #
 # BPF program
 #
-bpf_src = "modules/http_analysis.bpf"
+bpf_src = "modules/udp_analysis.bpf"
 # Compat with kernel < 4.16, bcc < 0.6
 
 #
 # PCP BCC PMDA constants
 #
-MODULE = 'http_analysis'
+MODULE = 'udp_analysis'
 BASENS = 'proc.io.net.http.'
 units_bytes = pmUnits(1, 0, 0, PM_SPACE_BYTE, 0, 0)
 units_usecs = pmUnits(0, 1, 0, 0, PM_TIME_USEC, 0)
 units_none = pmUnits(0, 0, 0, 0, 0, 0)
 
-tcpIpMetaFields = [
+UdpIpFields = [
     'src_port',
     'dst_port',
     'src_ip',
     'dst_ip',
     'tcp_data_checksum', # Used mainly to deduplicate packets
 ]
-TcpIpMeta = namedtuple('TcpIpMeta', tcpIpMetaFields)
+TcpIpMeta = namedtuple('TcpIpMeta', UdpIpFields)
 # HTTP Metadata that could be logged in PCP (some field may be empty). Note:
 # headers are in a list because we need to be able to show duplicated key
 # headers. Will be serialised as JSON array.
-httpMetaRequestFields = tcpIpMetaFields[:]
+httpMetaRequestFields = UdpIpFields[:]
 httpMetaRequestFields.extend([
     'method', # GET, POST…
     'path', # /path?key1=val1&key2=val2
@@ -78,7 +78,7 @@ httpMetaRequestFields.extend([
 ])
 HttpMetaRequest = namedtuple('HttpMetaRequest', httpMetaRequestFields)
 
-httpMetaResponseFields = tcpIpMetaFields[:]
+httpMetaResponseFields = UdpIpFields[:]
 httpMetaResponseFields.extend([
     'code', # 404, 200…
     'txt', # Not found…
@@ -88,7 +88,7 @@ httpMetaResponseFields.extend([
 HttpMetaResponse = namedtuple('HttpMetaResponse', httpMetaResponseFields)
 
 # For incorrect HTTP
-httpMetaIncorrectFields = tcpIpMetaFields[:]
+httpMetaIncorrectFields = UdpIpFields[:]
 httpMetaIncorrectFields.extend([
     'line', # Line analysed that resulted in being classified as incorrect
 ])
@@ -123,7 +123,7 @@ class PCPBCCModule(PCPBCCBase):
         self.ips = []
         self.max_packet_length = 4096 # max packet length on the interface in the config file
         self.session_count = 20
-        self.debug = False
+        self.debug = True
         self.bpf_sessions = None
         self.socket_fd = None
         self.buffer_page_count = 64
@@ -284,31 +284,38 @@ class PCPBCCModule(PCPBCCBase):
           #value to multiply * 4 byte
           #e.g. DataOffset = 5 ; TCP Header Length = 5 * 4 byte = 20 byte
 
-          tcp_header_length = packet_bytearray[ETH_HLEN + ip_header_length + 12]  #load Byte
-          tcp_header_length = tcp_header_length & 0xF0                            #mask bit 4..7
-          tcp_header_length = tcp_header_length >> 2                              #SHR 4 ; SHL 2 -> SHR 2
+          # UDP HEADER 
+          #  0      7 8     15 16    23 24    31
+          #  +--------+--------+--------+--------+
+          #  |     Source      |   Destination   |
+          #  |      Port       |      Port       |
+          #  +--------+--------+--------+--------+
+          #  |                 |                 |
+          #  |     Length      |    Checksum     |
+          #  +--------+--------+--------+--------+
+          UDP_HLEN = 8
 
           port_src_str = packet_str[ETH_HLEN+ip_header_length:ETH_HLEN+ip_header_length+2]
           port_dst_str = packet_str[ETH_HLEN+ip_header_length+2:ETH_HLEN+ip_header_length+4]
           port_src = int(self.toHex(port_src_str),16)
           port_dst = int(self.toHex(port_dst_str),16)
 
-          payload_offset = ETH_HLEN + ip_header_length + tcp_header_length
+          payload_offset = ETH_HLEN + ip_header_length + UDP_HLEN
 
-          # TCP checksum is often offloaded to hardware and we get an unreliable value
-          #  16              17              18              19
-          #  0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
-          # +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-          # |           Checksum            |         Urgent Pointer        |
-          # +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+          if self.debug:
+              payload_hex = self.toHex(packet_str[payload_offset:])
+              self.log("RAW PAYLOAD\n%s" % payload_hex)
 
-          #  checksum = packet_bytearray[ETH_HLEN + ip_header_length + 16:ETH_HLEN + ip_header_length + 18]
+          # UDP Checksum is irrelevant (not required by rfc), we will hash the content
           checksum = hash(packet_bytearray[payload_offset:].hex()) if self.deduplicate else None
 
-          tcpIpMeta = TcpIpMeta(src_port=port_src, dst_port=port_dst,
+          udpIp = TcpIpMeta(src_port=port_src, dst_port=port_dst,
                              src_ip=str(ipaddress.ip_address(ip_src)),
                              dst_ip=str(ipaddress.ip_address(ip_dst)),
                              tcp_data_checksum=checksum)
+
+          if self.debug:
+              self.log("udpIp %s" % str(udpIp))
 
           #payload_string contains only packet payload
           payload_string = packet_str[(payload_offset):(len(packet_bytearray))].decode(errors='replace')
@@ -324,7 +331,7 @@ class PCPBCCModule(PCPBCCBase):
             if (CRLF in payload_string):
               #url entirely contained in first packet -> print it all
               (first_line, headers) = self.first_line_and_headers(payload_string)
-              httpMeta = self.in_httpMeta(first_line, tcpIpMeta, headers)
+              httpMeta = self.in_httpMeta(first_line, UdpIp, headers)
               if self.detect_ws:
                   i, httpMeta = self.is_websocket_upgrade(httpMeta)
               self.store_in_cache(httpMeta)
@@ -359,7 +366,7 @@ class PCPBCCModule(PCPBCCBase):
                   prev_payload_string += payload_string
                   #print HTTP GET/POST url
                   substring = self.substringUntilCRLF(payload_string)
-                  self.store_in_cache(substring, tcpIpMeta)
+                  self.store_in_cache(substring, UdpIp)
                   #clean bpf_sessions & local_dictionary
                   try:
                     del self.bpf_sessions[current_Key]
@@ -409,27 +416,27 @@ class PCPBCCModule(PCPBCCBase):
         ))
         return lines[0], headers
 
-    def in_httpMeta(self, http_line, tcpIpMeta, headers=[]):
+    def in_httpMeta(self, http_line, UdpIp, headers=[]):
         """ Extract data from an HTTP line like 'GET /index HTTP/1.1'
             or 'HTTP/1.1 404 Not Found' in an httpMeta* object
         """
         httpMeta = HttpMetaIncorrect(line=http_line,
-                                     src_port=tcpIpMeta.src_port,
-                                     dst_port=tcpIpMeta.dst_port,
-                                     src_ip=tcpIpMeta.src_ip,
-                                     dst_ip=tcpIpMeta.dst_ip,
-                                     tcp_data_checksum=tcpIpMeta.tcp_data_checksum,
+                                     src_port=UdpIp.src_port,
+                                     dst_port=UdpIp.dst_port,
+                                     src_ip=UdpIp.src_ip,
+                                     dst_ip=UdpIp.dst_ip,
+                                     tcp_data_checksum=UdpIp.tcp_data_checksum,
                                      )
         m = self.http_req_ans.match(http_line)
         if m is None:
             pass
         elif (m['http_response']):
             httpMeta = HttpMetaResponse(
-                src_port=tcpIpMeta.src_port,
-                dst_port=tcpIpMeta.dst_port,
-                src_ip=tcpIpMeta.src_ip,
-                dst_ip=tcpIpMeta.dst_ip,
-                tcp_data_checksum=tcpIpMeta.tcp_data_checksum,
+                src_port=UdpIp.src_port,
+                dst_port=UdpIp.dst_port,
+                src_ip=UdpIp.src_ip,
+                dst_ip=UdpIp.dst_ip,
+                tcp_data_checksum=UdpIp.tcp_data_checksum,
                 code=int(m['code']),
                 txt=m['txt'],
                 headers=headers,
@@ -437,11 +444,11 @@ class PCPBCCModule(PCPBCCBase):
             )
         elif (m['http_request']):
             httpMeta = HttpMetaRequest(
-                src_port=tcpIpMeta.src_port,
-                dst_port=tcpIpMeta.dst_port,
-                src_ip=tcpIpMeta.src_ip,
-                dst_ip=tcpIpMeta.dst_ip,
-                tcp_data_checksum=tcpIpMeta.tcp_data_checksum,
+                src_port=UdpIp.src_port,
+                dst_port=UdpIp.dst_port,
+                src_ip=UdpIp.src_ip,
+                dst_ip=UdpIp.dst_ip,
+                tcp_data_checksum=UdpIp.tcp_data_checksum,
                 method=m['method'],
                 path=m['path'],
                 headers=headers,
@@ -577,7 +584,7 @@ class PCPBCCModule(PCPBCCBase):
             #load eBPF program http_filter of type SOCKET_FILTER into the kernel eBPF vm
             #more info about eBPF program types
             #http://man7.org/linux/man-pages/man2/bpf.2.html
-            function_http_filter = self.bpf.load_func("http_filter", BPF.SOCKET_FILTER)
+            function_http_filter = self.bpf.load_func("udp_analysis", BPF.SOCKET_FILTER)
             #create raw socket, bind it to interface
             #attach bpf program to socket created
             BPF.attach_raw_socket(function_http_filter, self.interface)
