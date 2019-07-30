@@ -1,0 +1,556 @@
+# Copyright (C) 2019 SnT
+# Copyright (C) 2017-2018 Marko Myllynen <myllynen@redhat.com>
+# Copyright (C) 2018 Andreas Gerstmayr <andreas@gerstmayr.me>
+# Based on the tcplife module of BCC PMDA by Marko Myllynen and Andreas Gerstmayr:
+# https://github.com/iovisor/bcc/blob/master/tools/tcplife.py
+# Based on HTTP filter by Bertrone Matteo:
+# https://github.com/iovisor/bcc/tree/master/examples/networking/http_filter
+#
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 2 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+""" PCP BCC PMDA dtls_analysis module (with support for DTLS 1.0) """
+
+# pylint: disable=invalid-name, too-few-public-methods, too-many-instance-attributes
+
+import ctypes as ct
+from collections import deque, namedtuple
+from functools import reduce
+from enum import Enum, unique
+from threading import Lock, Thread
+import time
+import socket
+import ipaddress
+from socket import inet_ntop, AF_INET, AF_INET6
+from struct import pack
+from os import path, read
+import re
+import json
+import binascii
+
+from bcc import BPF
+
+from pcp.pmapi import pmUnits
+from cpmapi import PM_TYPE_U32, PM_TYPE_U64, PM_TYPE_STRING, PM_SEM_INSTANT
+from cpmapi import PM_SPACE_BYTE, PM_TIME_USEC
+from cpmda import PMDA_FETCH_NOVALUES
+
+from modules.pcpbcc import PCPBCCBase
+
+#
+# BPF program
+#
+bpf_src = "modules/dtls_analysis.bpf"
+
+#
+# PCP BCC PMDA constants
+#
+MODULE = 'dtls_analysis'
+BASENS = 'proc.io.net.dtls.'
+units_bytes = pmUnits(1, 0, 0, PM_SPACE_BYTE, 0, 0)
+units_usecs = pmUnits(0, 1, 0, 0, PM_TIME_USEC, 0)
+units_none = pmUnits(0, 0, 0, 0, 0, 0)
+
+# TLS ContentType, only the ones defined in RFC4346: https://tools.ietf.org/html/rfc4346#page-18
+@unique
+class TlsContentType(Enum):
+    CHANGE_CIPHER_SPEC = 20
+    ALERT = 21
+    HANDSHAKE = 22
+    APPLICATION_DATA = 23
+
+    @classmethod
+    def nameOrNone(cls, n):
+        """ Return the name corresponding to the value, if any. None otherwise """
+        try:
+            return cls(n)
+        except ValueError:
+            return None
+
+
+# Common for all subsequent Record Layer: https://tools.ietf.org/html/rfc4347#section-4.1
+UdpIpFields = [
+    'src_port',
+    'dst_port',
+    'src_ip',
+    'dst_ip',
+    'udp_payload_checksum', # Used mainly to deduplicate packets
+]
+UdpIpMeta = namedtuple('UdpIpMeta', UdpIpFields)
+# Handshake of dtls connection, see https://tools.ietf.org/html/rfc4347#section-4.3.1
+# Metadata that could be logged in PCP (some field may be empty).
+
+# Two ClientHello are sent and only the second one has a non empty cookie. (Cf
+# schema of exchange page 11 of the RFC)
+# Most common metadata, comming from DTLSPlainText https://tools.ietf.org/html/rfc4347#page-6
+dtlsMetaFields = UdpIpFields[:]
+dtlsMetaFields.extend([
+    'content_type',
+    'version', # Protocol version. It is stored as 1’s complement on the wire, but is a string like '1.0' or '1.2' here
+    'epoch',
+    'sequence_number',
+    'length',
+])
+DtlsMeta = namedtuple('DtlsMetaClientHello', dtlsMetaFields)
+
+CLEANUP_N_PACKETS  = 50       #run cleanup every CLEANUP_N_PACKETS packets received
+MAX_AGE_SECONDS    = 30       #max age entry in bpf_sessions map
+
+#
+# PCP BCC Module
+#
+class PCPBCCModule(PCPBCCBase):
+    """ PCP BCC tcplife module """
+    def __init__(self, config, log, err, proc_refresh):
+        """ Constructor """
+        PCPBCCBase.__init__(self, MODULE, config, log, err)
+
+        self.proc_refresh = proc_refresh
+
+        self.deduplicate = False
+        self.interface = None
+        self.dports = []
+        self.sports = []
+        self.ports = []
+        self.nports = []
+        self.ips = []
+        self.max_packet_length = 4096 # max packet length on the interface in the config file
+        self.session_count = 20
+        self.debug = False
+        self.bpf_sessions = None
+        self.socket_fd = None
+        self.buffer_page_count = 64
+        self.bpf_text = None
+
+        for opt in self.config.options(MODULE):
+            if opt == 'port':
+                self.ports = [int(port) for port in self.config.get(MODULE, opt).split(",")]
+                self.log("Filtering on local or remote ports: %s." % str(self.sports))
+            if opt == 'nport':
+                self.nports = [int(port) for port in self.config.get(MODULE, opt).split(",")]
+                self.log("Filtering on local or remote ports different of: %s." % str(self.sports))
+            if opt == 'dport':
+                self.dports = [int(port) for port in self.config.get(MODULE, opt).split(",")]
+                self.log("Filtering on remote ports: %s." % str(self.dports))
+            if opt == 'sport':
+                self.sports = [int(port) for port in self.config.get(MODULE, opt).split(",")]
+                self.log("Filtering on local ports: %s." % str(self.sports))
+            if opt == 'ip':
+                packed = self.config.get(MODULE, opt).split(",")
+                self.ips = [socket.inet_aton(ip) for ip in packed]
+                self.log("Filtering on local ips: %s." % str(packed))
+            if opt == 'detect_ws':
+                self.detect_ws = int(self.config.get(MODULE, opt)) > 0
+                s = "Detection of websocket handshake is " 
+                if self.detect_ws:
+                    self.log(s+"enabled")
+                else:
+                    self.log(s+"disabled")
+            if opt == 'deduplicate':
+                self.deduplicate = int(self.config.get(MODULE, opt)) > 0
+                s = "Removal of consecutive duplicated packets is " 
+                if self.deduplicate:
+                    self.log(s+"enabled")
+                else:
+                    self.log(s+"disabled")
+            if opt == 'interface': # Interface for the capture
+                self.interface = self.config.get(MODULE, opt)
+                self.log("Binding socket to: %s." % str(self.interface))
+
+        if not self.interface:
+            raise RuntimeError("interface is mandatory")
+
+        self.cache = deque(maxlen=self.session_count)
+        self.insts = {str(i) : ct.c_int(1) for i in range(self.session_count)}
+
+        self.lock = Lock()
+        self.thread = None
+
+        self.log("Initialized.")
+
+    def toHex(self, s):
+        """ Convert a bin string into a string of hex char. Could be used to
+        print raw packets """
+        lst = []
+        for ch in s:
+            if type(ch) is int:
+                hv = hex(ch).replace('0x', '')
+            else:
+                hv = hex(ord(ch)).replace('0x', '')
+            if len(hv) == 1:
+                hv = '0'+hv
+            lst.append(hv)
+
+        return reduce(lambda x,y:x+y, lst, '')
+
+    def cleanup(self, ):
+        current_time = int(time.time())
+        # for leaf having, do:
+        # timestap  == 0        --> update with current timestamp
+        # AGE > MAX_AGE_SECONDS --> delete older item
+        for key,leaf in self.bpf_sessions.items():
+          try:
+            current_leaf = self.bpf_sessions[key]
+            if (current_leaf.timestamp == 0):
+              self.bpf_sessions[key] = self.bpf_sessions.Leaf(current_time)
+            else:
+              age = current_time - current_leaf.timestamp
+              if (age > MAX_AGE_SECONDS):
+                del self.bpf_sessions[key]
+          except:
+            self.log("cleanup exception.")
+        return
+
+    def udp_packet_poller(self):
+        """ IP event handler """
+        packet_count = 0
+
+        #dictionary containing association <key(ipsrc,ipdst,portsrc,portdst),payload_string>
+        #if url is not entirely contained in only one packet, save the firt part of it in this local dict
+        #when I find \r\n in a next pkt, append and print all the url
+        local_dictionary = {}
+
+        while 1:
+          #retrieve raw packet from socket
+          packet_str = read(self.socket_fd, self.max_packet_length)
+          packet_count += 1
+
+          if self.debug:
+              packet_hex = self.toHex(packet_str)
+              self.log("RAW PACKET\n%s" % packet_hex)
+
+          packet_bytearray = bytearray(packet_str)
+
+          #ethernet header length
+          ETH_HLEN = 14
+
+          #IP HEADER
+          #https://tools.ietf.org/html/rfc791
+          # 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
+          # +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+          # |Version|  IHL  |Type of Service|          Total Length         |
+          # +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+          #
+          #IHL : Internet Header Length is the length of the internet header
+          #value to multiply * 4 byte
+          #e.g. IHL = 5 ; IP Header Length = 5 * 4 byte = 20 byte
+          #
+          #Total length: This 16-bit field defines the entire packet size,
+          #including header and data, in bytes.
+
+          total_length = packet_bytearray[ETH_HLEN + 2]               #load MSB
+          total_length = total_length << 8                            #shift MSB
+          total_length = total_length + packet_bytearray[ETH_HLEN+3]  #add LSB
+
+          ip_header_length = packet_bytearray[ETH_HLEN]               #load Byte
+          ip_header_length = ip_header_length & 0x0F                  #mask bits 0..3
+          ip_header_length = ip_header_length << 2                    #shift to obtain length
+
+          ip_src_str = packet_str[ETH_HLEN+12:ETH_HLEN+16]                #ip source offset 12..15
+          ip_dst_str = packet_str[ETH_HLEN+16:ETH_HLEN+20]                #ip dest   offset 16..19
+          ip_src = int(self.toHex(ip_src_str),16)
+          ip_dst = int(self.toHex(ip_dst_str),16)
+
+          #TCP HEADER
+          #https://www.rfc-editor.org/rfc/rfc793.txt
+          #  12              13              14              15
+          #  0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
+          # +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+          # |  Data |           |U|A|P|R|S|F|                               |
+          # | Offset| Reserved  |R|C|S|S|Y|I|            Window             |
+          # |       |           |G|K|H|T|N|N|                               |
+          # +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+          #
+          #Data Offset: This indicates where the data begins.
+          #The TCP header is an integral number of 32 bits long.
+          #value to multiply * 4 byte
+          #e.g. DataOffset = 5 ; TCP Header Length = 5 * 4 byte = 20 byte
+
+          # UDP HEADER 
+          #  0      7 8     15 16    23 24    31
+          #  +--------+--------+--------+--------+
+          #  |     Source      |   Destination   |
+          #  |      Port       |      Port       |
+          #  +--------+--------+--------+--------+
+          #  |                 |                 |
+          #  |     Length      |    Checksum     |
+          #  +--------+--------+--------+--------+
+          UDP_HLEN = 8
+
+          port_src_str = packet_str[ETH_HLEN+ip_header_length:ETH_HLEN+ip_header_length+2]
+          port_dst_str = packet_str[ETH_HLEN+ip_header_length+2:ETH_HLEN+ip_header_length+4]
+          port_src = int(self.toHex(port_src_str),16)
+          port_dst = int(self.toHex(port_dst_str),16)
+
+          payload_offset = ETH_HLEN + ip_header_length + UDP_HLEN
+
+          if self.debug:
+              payload_hex = self.toHex(packet_str[payload_offset:])
+              self.log("RAW PAYLOAD\n%s" % payload_hex)
+
+          # UDP Checksum is irrelevant (not required by rfc), we will hash the content
+          checksum = hash(packet_bytearray[payload_offset:].hex()) if self.deduplicate else None
+
+          udpIp = UdpIpMeta(src_port=port_src, dst_port=port_dst,
+                             src_ip=str(ipaddress.ip_address(ip_src)),
+                             dst_ip=str(ipaddress.ip_address(ip_dst)),
+                             udp_payload_checksum=checksum)
+
+          if self.debug:
+              self.log("udpIp %s" % str(udpIp))
+
+          #current_Key contains ip source/dest and port source/map
+          #useful for direct bpf_sessions map access
+          current_Key = self.bpf_sessions.Key(ip_src,ip_dst,port_src,port_dst)
+
+          dtlsMeta = self.inDtlsMeta(udpIp, packet_bytearray[payload_offset:payload_offset+68])
+
+          self.store_in_cache(dtlsMeta)
+
+          #check if dirty entry are present in bpf_sessions
+          if (((packet_count) % CLEANUP_N_PACKETS) == 0):
+            self.cleanup()
+
+    def inDtlsMeta(self, udpIpMeta, firstBytes):
+        """ Extract data from a DTLS/UDP the first 68 bytes of a DTLS packet in
+            an DtlsMeta object """
+        ct = None
+        version = None
+        epoch = None
+        sequence_number = None
+        length = None
+        position = 0 # Position in packet
+
+        #ct = TlsContentType.nameOrNone(int.from_bytes(firstBytes[0], byteorder='big', signed=False))
+        ct = TlsContentType.nameOrNone(firstBytes[position])
+        position +=1
+        if ct is not None: # Found known message type, extract header data
+            version_major = firstBytes[position]
+            position += 1
+            version_major ^= 0xFF
+            version_minor = firstBytes[position]
+            position += 1
+            version_minor ^= 0xFF
+            version = "%d.%d" % (version_major, version_minor)
+            epoch = int.from_bytes(firstBytes[position:position+2], byteorder='big', signed=False)
+            position += 2
+            seq = int.from_bytes(firstBytes[position:position+6], byteorder='big', signed=False)
+            position += 6
+            length = int.from_bytes(firstBytes[position:position+2], byteorder='big', signed=False)
+            position += 2
+
+        dtlsMeta = DtlsMeta(src_port=udpIpMeta.src_port,
+                            dst_port=udpIpMeta.dst_port,
+                            src_ip=udpIpMeta.src_ip,
+                            dst_ip=udpIpMeta.dst_ip,
+                            udp_payload_checksum=udpIpMeta.udp_payload_checksum,
+                            content_type=ct,
+                            version=version,
+                            epoch=epoch,
+                            sequence_number=seq,
+                            length=length,
+                            )
+        return dtlsMeta
+
+    def store_in_cache(self, udpMeta):
+        """ Store an udpMeta in cache, serialising fields when necessary """
+        # Serialize headers
+        self.lock.acquire()
+        if self.deduplicate and len(self.cache) > 0 and self.cache[0].udp_payload_checksum == udpMeta.udp_payload_checksum:
+            pass
+        else:
+            self.cache.appendleft(udpMeta)
+        self.lock.release()
+        return
+
+
+    def is_websocket_upgrade(self, udpMeta):
+        """ Return non 0 code if the udpMeta* structure is a websocket upgrade. Return 1 for the client request and 2 for the server answer. See https://tools.ietf.org/html/rfc6455.
+            The second return is the updated udpMeta
+        """
+        def put_header_dict_lower():
+            """ Put all in one dictionary, with lower case key as they are case insensitive according to RFC. Account for the fact that key may be duplicated """
+            headers_dict = {}
+            for d in udpMeta.headers:
+                for k,v in d.items(): # Should run once as these dictonary contain only one value
+                    # Headers key are case insensitive
+                    kl = k.lower()
+                    l = headers_dict.get(kl, [])
+                    l.append(v)
+                    headers_dict[kl] = l
+            return headers_dict
+
+        def header_with_value(headers_dict, header_key, required_header_value):
+            """ Return None if header_key is not in headers_dict.
+                Return True if a given header_key is present with a value
+                header_value (splitted on ',', case insensitive), False otherwise """
+            key = header_key.lower()
+            req_val = required_header_value.lower()
+
+            if key not in headers_dict: return None
+            for val in headers_dict[key]:
+                if req_val in map(lambda l: l.lower(), val.split(", ")):
+                    return True
+            return False
+
+        def perform_detection():
+            if type(udpMeta) is UdpOther:
+                return 0
+            # Page 21, https://tools.ietf.org/html/rfc6455#section-4.2.1, verifying only the minimum
+            if type(udpMeta) is DtlsMetaClientHello:
+                if udpMeta.method == "GET":
+                    headers_dict = put_header_dict_lower()
+                    if header_with_value(headers_dict, "upgrade", "websocket") \
+                            and headers_dict.get("sec-websocket-key") \
+                            and headers_dict.get("sec-websocket-version"):
+                        return 1
+                return 0
+            # Page 19, https://tools.ietf.org/html/rfc6455#section-4.1, verifying only the minimum
+            if type(udpMeta) is DtlsMetaClientHelloVerify:
+                if udpMeta.code == 101:
+                    headers_dict = put_header_dict_lower()
+                    if header_with_value(headers_dict, "upgrade", "websocket") \
+                            and header_with_value(headers_dict, "connection", "upgrade") \
+                            and headers_dict.get("sec-websocket-accept"):
+                        return 2
+                return 0
+            self.log("is_websocket_upgrade: incorrect type of argument")
+            return 0
+
+        code = perform_detection()
+        return code, udpMeta._replace(is_websocket_upgrade=code)
+
+    # pylint: disable=bad-continuation
+    def metrics(self):
+        """ Get metric definitions """
+        name = BASENS
+        self.items = (
+            # Name - reserved - type - semantics - units - help
+            (name + 'saddr', None, PM_TYPE_STRING, PM_SEM_INSTANT, units_none, 'source address'),
+            (name + 'sport', None, PM_TYPE_U32, PM_SEM_INSTANT, units_none, 'source port'),
+            (name + 'daddr', None, PM_TYPE_STRING, PM_SEM_INSTANT, units_none, 'destination '
+                                                                               'address'),
+            (name + 'dport', None, PM_TYPE_U32, PM_SEM_INSTANT, units_none, 'destination port'),
+            (name + 'content_type', None, PM_TYPE_STRING, PM_SEM_INSTANT, units_none, 'type of DTLS message (handshake, data…)'),
+            (name + 'version', None, PM_TYPE_STRING, PM_SEM_INSTANT, units_none, 'DTLS version'),
+            (name + 'epoch', None, PM_TYPE_U32, PM_SEM_INSTANT, units_none, 'epoch header'),
+            (name + 'sequence_number', None, PM_TYPE_U32, PM_SEM_INSTANT, units_none, 'sequence number'),
+            (name + 'length', None, PM_TYPE_U32, PM_SEM_INSTANT, units_none, 'length of the DTLS content'),
+        )
+        return True, self.items
+
+    def compile(self):
+        """ Compile BPF """
+        try:
+            if not self.bpf_text:
+                with open(path.dirname(__file__) + '/../' + bpf_src) as src:
+                    self.bpf_text = src.read()
+
+                if self.ports:
+                    filterp_dst = " && ".join(["key.dst_port != %d" % port for port in self.ports])
+                    filterp_src = " && ".join(["key.src_port != %d" % port for port in self.ports])
+                    filterp = " && ".join(["(%s)" % filt for filt in [filterp_dst, filterp_src]])
+                    filter_txt = "if (%s) { goto DROP; }" % filterp
+                    self.bpf_text = self.bpf_text.replace("//FILTER_LDPORT", filter_txt)
+                if self.nports:
+                    filterp_dst = " || ".join(["key.dst_port == %d" % port for port in self.nports])
+                    filterp_src = " || ".join(["key.src_port == %d" % port for port in self.nports])
+                    filterp = " || ".join(["(%s)" % filt for filt in [filterp_dst, filterp_src]])
+                    filter_txt = "if (%s) { goto DROP; }" % filterp
+                    self.bpf_text = self.bpf_text.replace("//FILTER_LDPORT", filter_txt)
+                if self.dports:
+                    filterp = " && ".join(["key.dst_port != %d" % port for port in self.dports])
+                    filter_txt = "if (%s) { goto DROP; }" % filterp
+                    self.bpf_text = self.bpf_text.replace("//FILTER_DPORT", filter_txt)
+                if self.sports:
+                    filterp = " && ".join(["key.src_port != %d" % port for port in self.sports])
+                    filter_txt = "if (%s) { goto DROP; }" % filterp
+                    self.bpf_text = self.bpf_text.replace("//FILTER_LPORT", filter_txt)
+
+                if self.ips:
+                    filteri_dst = " && ".join(["key.dst_ip != 0x%s" % ip.hex() for ip in self.ips])
+                    filteri_src = " && ".join(["key.src_ip != 0x%s" % ip.hex() for ip in self.ips])
+                    filteri = " && ".join(["(%s)" % filt for filt in [filteri_dst, filteri_src]])
+                    filter_txt = "if (%s) { goto DROP; }" % filteri
+                    self.bpf_text = self.bpf_text.replace("//FILTER_IP", filter_txt)
+
+            self.bpf = BPF(text=self.bpf_text)
+            #load eBPF program udp_filter of type SOCKET_FILTER into the kernel eBPF vm
+            #more info about eBPF program types
+            #udp://man7.org/linux/man-pages/man2/bpf.2.html
+            function_udp_filter = self.bpf.load_func("dtls_analysis", BPF.SOCKET_FILTER)
+            #create raw socket, bind it to interface
+            #attach bpf program to socket created
+            BPF.attach_raw_socket(function_udp_filter, self.interface)
+            #get file descriptor of the socket previously created inside BPF.attach_raw_socket
+            self.socket_fd = function_udp_filter.sock
+            #create python socket object, from the file descriptor
+            sock = socket.fromfd(self.socket_fd, socket.PF_PACKET, socket.SOCK_RAW, socket.IPPROTO_IP)
+            #set it as blocking socket
+            sock.setblocking(True)
+            self.bpf_sessions = self.bpf.get_table("sessions")
+
+            if self.debug:
+                self.log("BPF to be compiled:\n" + self.bpf_text.strip())
+
+            self.thread = Thread(name="socketpoller", target=self.udp_packet_poller)
+            self.thread.setDaemon(True)
+            self.thread.start()
+            self.log("Compiled.")
+        except Exception as error: # pylint: disable=broad-except
+            self.bpf = None
+            self.err(str(error))
+            self.err("Module NOT active!")
+            raise
+
+    def refresh(self):
+        """ Refresh BPF data """
+        if self.bpf is None:
+            return None
+
+        return self.insts
+
+    def bpfdata(self, item, inst):
+        """ Return BPF data as PCP metric value """
+        def noneOnAttrErr(attribute_access_function):
+            """ Return None in case the attribute_access_function raises AttributeError """
+            try:
+                return attribute_access_function()
+            except AttributeError:
+                return None
+        try:
+            key = int(self.pmdaIndom.inst_name_lookup(inst))
+            # u stands for udpMeta, as we match an UdpOther,
+            # DtlsMetaClientHello or DtlsMetaClientHelloVerify object
+            key_metrics_mapping = {
+                0: lambda u: noneOnAttrErr(lambda: u.src_ip),
+                1: lambda u: noneOnAttrErr(lambda: u.src_port),
+                2: lambda u: noneOnAttrErr(lambda: u.dst_ip),
+                3: lambda u: noneOnAttrErr(lambda: u.dst_port),
+                4: lambda u: noneOnAttrErr(lambda: u.content_type.name),
+                5: lambda u: noneOnAttrErr(lambda: u.version),
+                6: lambda u: noneOnAttrErr(lambda: u.epoch),
+                7: lambda u: noneOnAttrErr(lambda: u.sequence_number),
+                8: lambda u: noneOnAttrErr(lambda: u.length),
+            }
+
+            self.lock.acquire()
+            value = key_metrics_mapping[item](self.cache[key])
+            self.lock.release()
+
+            if value is not None:
+                return [value, 1]
+            else:
+                return [PMDA_FETCH_NOVALUES, 0]
+        except Exception as e: # pylint: disable=broad-except
+            self.lock.release()
+            self.log("bpfdata Exception: "+str(e))
+            return [PMDA_FETCH_NOVALUES, 0]
+

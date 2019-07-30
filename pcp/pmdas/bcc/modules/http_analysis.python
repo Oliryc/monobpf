@@ -31,6 +31,8 @@ from socket import inet_ntop, AF_INET, AF_INET6
 from struct import pack
 from os import path, read
 import re
+import json
+import binascii
 
 from bcc import BPF
 
@@ -41,15 +43,10 @@ from cpmda import PMDA_FETCH_NOVALUES
 
 from modules.pcpbcc import PCPBCCBase
 
-# TODO:
-# - IPv6 support?
-# - Port filtering
-
 #
 # BPF program
 #
 bpf_src = "modules/http_analysis.bpf"
-# Compat with kernel < 4.16, bcc < 0.6
 
 #
 # PCP BCC PMDA constants
@@ -60,40 +57,49 @@ units_bytes = pmUnits(1, 0, 0, PM_SPACE_BYTE, 0, 0)
 units_usecs = pmUnits(0, 1, 0, 0, PM_TIME_USEC, 0)
 units_none = pmUnits(0, 0, 0, 0, 0, 0)
 
-# HTTP Metadata to be logged in PCP (some field may be empty)
-HttpMetaRequest = namedtuple('HttpMetaRequest', 
-                      [
-                          'src_port',
-                          'dst_port',
-                          'src_ip',
-                          'dst_ip',
-                          'method', # GET, POST…
-                          'path', # /path?key1=val1&key2=val2
-                          'headers', # List containing the headers with value
-                       ])
-HttpMetaResponse = namedtuple('HttpMetaResponse', 
-                      [
-                          'src_port',
-                          'dst_port',
-                          'src_ip',
-                          'dst_ip',
-                          'code', # 404, 200…
-                          'txt', # Not found…
-                          'headers', # List containing the headers with value
-                       ])
+tcpIpMetaFields = [
+    'src_port',
+    'dst_port',
+    'src_ip',
+    'dst_ip',
+    'tcp_data_checksum', # Used mainly to deduplicate packets
+]
+TcpIpMeta = namedtuple('TcpIpMeta', tcpIpMetaFields)
+# HTTP Metadata that could be logged in PCP (some field may be empty). Note:
+# headers are in a list because we need to be able to show duplicated key
+# headers. Will be serialised as JSON array.
+httpMetaRequestFields = tcpIpMetaFields[:]
+httpMetaRequestFields.extend([
+    'method', # GET, POST…
+    'path', # /path?key1=val1&key2=val2
+    'headers', # List containing dictionnary for key/value of HTTP headers
+    'is_websocket_upgrade', # Is detected as websocket upgrade? None if no detection attempt, 0 if not an upgrade, 1 if client side of the handshake, 2 for server side
+])
+HttpMetaRequest = namedtuple('HttpMetaRequest', httpMetaRequestFields)
+
+httpMetaResponseFields = tcpIpMetaFields[:]
+httpMetaResponseFields.extend([
+    'code', # 404, 200…
+    'txt', # Not found…
+    'headers', # List containing dictionnary for key/value of HTTP headers
+    'is_websocket_upgrade', # Idem
+])
+HttpMetaResponse = namedtuple('HttpMetaResponse', httpMetaResponseFields)
+
 # For incorrect HTTP
-HttpMetaIncorrect = namedtuple('HttpMetaIncorrect', 
-                      [
-                          'src_port',
-                          'dst_port',
-                          'src_ip',
-                          'dst_ip',
-                          'line', # Line analysed that resulted in being classified as incorrect
-                       ])
+httpMetaIncorrectFields = tcpIpMetaFields[:]
+httpMetaIncorrectFields.extend([
+    'line', # Line analysed that resulted in being classified as incorrect
+])
+HttpMetaIncorrect = namedtuple('HttpMetaIncorrect', httpMetaIncorrectFields)
 
 CLEANUP_N_PACKETS  = 50       #run cleanup every CLEANUP_N_PACKETS packets received
 MAX_URL_STRING_LEN = 8192     #max url string len (usually 8K)
 MAX_AGE_SECONDS    = 30       #max age entry in bpf_sessions map
+MAX_N_HEADER       = 30          #max number of header to be matched
+CRLF               = "\r\n"      #HTTP separator
+# Format of header from https://tools.ietf.org/html/rfc7230#section-3.2
+HTTP_HEADER_REGEX       = re.compile(r'\A(.*?): ?(.*\S) ?\Z')  # To parse HTTP headers key/value
 
 
 #
@@ -107,26 +113,56 @@ class PCPBCCModule(PCPBCCBase):
 
         self.proc_refresh = proc_refresh
 
-        # TODO Make some of these param of the config file
+        self.deduplicate = False
         self.interface = None
         self.dports = []
-        self.lports = []
+        self.sports = []
+        self.ports = []
+        self.nports = []
+        self.ips = []
+        self.max_packet_length = 4096 # max packet length on the interface in the config file
         self.session_count = 20
+        self.debug = False
         self.bpf_sessions = None
         self.socket_fd = None
         self.buffer_page_count = 64
+        self.bpf_text = None
 
         # To extract data from HTTP packets, we will use this regex
-        http_request_or_answer = r'\A((?P<http_response>HTTP/1.1) (?P<code>\d+) (?P<txt>[^\r]*))|((?P<method>[A-Z]+) (?P<path>/\S*) (?P<http_request>HTTP/1.1)\r)\Z'
+        http_request_or_answer = r'\A((?P<http_response>HTTP/1.1) (?P<code>\d+) (?P<txt>.*))|((?P<method>[A-Z]+) (?P<path>/\S*) (?P<http_request>HTTP/1.1))\Z'
         self.http_req_ans = re.compile(http_request_or_answer)
 
         for opt in self.config.options(MODULE):
+            if opt == 'port':
+                self.ports = [int(port) for port in self.config.get(MODULE, opt).split(",")]
+                self.log("Filtering on local or remote ports: %s." % str(self.sports))
+            if opt == 'nport':
+                self.nports = [int(port) for port in self.config.get(MODULE, opt).split(",")]
+                self.log("Filtering on local or remote ports different of: %s." % str(self.sports))
             if opt == 'dport':
                 self.dports = [int(port) for port in self.config.get(MODULE, opt).split(",")]
                 self.log("Filtering on remote ports: %s." % str(self.dports))
-            if opt == 'lport':
-                self.lports = [int(port) for port in self.config.get(MODULE, opt).split(",")]
-                self.log("Filtering on local ports: %s." % str(self.lports))
+            if opt == 'sport':
+                self.sports = [int(port) for port in self.config.get(MODULE, opt).split(",")]
+                self.log("Filtering on local ports: %s." % str(self.sports))
+            if opt == 'ip':
+                packed = self.config.get(MODULE, opt).split(",")
+                self.ips = [socket.inet_aton(ip) for ip in packed]
+                self.log("Filtering on local ips: %s." % str(packed))
+            if opt == 'detect_ws':
+                self.detect_ws = int(self.config.get(MODULE, opt)) > 0
+                s = "Detection of websocket handshake is " 
+                if self.detect_ws:
+                    self.log(s+"enabled")
+                else:
+                    self.log(s+"disabled")
+            if opt == 'deduplicate':
+                self.deduplicate = int(self.config.get(MODULE, opt)) > 0
+                s = "Removal of consecutive duplicated packets is " 
+                if self.deduplicate:
+                    self.log(s+"enabled")
+                else:
+                    self.log(s+"disabled")
             if opt == 'interface': # Interface for the capture
                 self.interface = self.config.get(MODULE, opt)
                 self.log("Binding socket to: %s." % str(self.interface))
@@ -142,9 +178,9 @@ class PCPBCCModule(PCPBCCBase):
 
         self.log("Initialized.")
 
-    #convert a bin string into a string of hex char
-    #helper function to print raw packet in hex
     def toHex(self, s):
+        """ Convert a bin string into a string of hex char. Could be used to
+        print raw packets """
         lst = []
         for ch in s:
             if type(ch) is int:
@@ -155,32 +191,28 @@ class PCPBCCModule(PCPBCCBase):
                 hv = '0'+hv
             lst.append(hv)
 
-        return reduce(lambda x,y:x+y, lst)
+        return reduce(lambda x,y:x+y, lst, '')
 
-    def substringUntilCRLF(self, str, startChar=0):
+    def substringUntilCRLF(self, string):
         """ Return substring from start to the first CRLF """
-        for k in range (startChar, len(str)-1):
-          if (str[k] == '\n'):
-            if (str[k-1] == '\r'):
-              return str[startChar:k]
+        l = string.split(CRLF, maxsplit=1)
+        if len(l) > 1: # At least one substring
+              return l[0]
         return ""
 
-    #cleanup function
     def cleanup(self, ):
-        #get current time in seconds
         current_time = int(time.time())
-        #looking for leaf having:
-        #timestap  == 0        --> update with current timestamp
-        #AGE > MAX_AGE_SECONDS --> delete item
+        # for leaf having, do:
+        # timestap  == 0        --> update with current timestamp
+        # AGE > MAX_AGE_SECONDS --> delete older item
         for key,leaf in self.bpf_sessions.items():
           try:
             current_leaf = self.bpf_sessions[key]
-            #set timestamp if timestamp == 0
             if (current_leaf.timestamp == 0):
               self.bpf_sessions[key] = self.bpf_sessions.Leaf(current_time)
             else:
-              #delete older entries
-              if (current_time - current_leaf.timestamp > MAX_AGE_SECONDS):
+              age = current_time - current_leaf.timestamp
+              if (age > MAX_AGE_SECONDS):
                 del self.bpf_sessions[key]
           except:
             self.log("cleanup exception.")
@@ -197,14 +229,13 @@ class PCPBCCModule(PCPBCCBase):
 
         while 1:
           #retrieve raw packet from socket
-          packet_str = read(self.socket_fd,4096) # TODO set packet length to max packet length on the interface in the config file
+          packet_str = read(self.socket_fd, self.max_packet_length)
           packet_count += 1
 
-          #DEBUG - print raw packet in hex format
-          #packet_hex = self.toHex(packet_str)
-          #print ("%s" % packet_hex)
+          if self.debug:
+              packet_hex = self.toHex(packet_str)
+              self.log("RAW PACKET\n%s" % packet_hex)
 
-          #convert packet into bytearray
           packet_bytearray = bytearray(packet_str)
 
           #ethernet header length
@@ -224,21 +255,16 @@ class PCPBCCModule(PCPBCCBase):
           #Total length: This 16-bit field defines the entire packet size,
           #including header and data, in bytes.
 
-          #calculate packet total length
           total_length = packet_bytearray[ETH_HLEN + 2]               #load MSB
           total_length = total_length << 8                            #shift MSB
           total_length = total_length + packet_bytearray[ETH_HLEN+3]  #add LSB
 
-          #calculate ip header length
           ip_header_length = packet_bytearray[ETH_HLEN]               #load Byte
           ip_header_length = ip_header_length & 0x0F                  #mask bits 0..3
           ip_header_length = ip_header_length << 2                    #shift to obtain length
 
-          #retrieve ip source/dest
           ip_src_str = packet_str[ETH_HLEN+12:ETH_HLEN+16]                #ip source offset 12..15
           ip_dst_str = packet_str[ETH_HLEN+16:ETH_HLEN+20]                #ip dest   offset 16..19
-
-
           ip_src = int(self.toHex(ip_src_str),16)
           ip_dst = int(self.toHex(ip_dst_str),16)
 
@@ -257,31 +283,34 @@ class PCPBCCModule(PCPBCCBase):
           #value to multiply * 4 byte
           #e.g. DataOffset = 5 ; TCP Header Length = 5 * 4 byte = 20 byte
 
-          #calculate tcp header length
           tcp_header_length = packet_bytearray[ETH_HLEN + ip_header_length + 12]  #load Byte
           tcp_header_length = tcp_header_length & 0xF0                            #mask bit 4..7
           tcp_header_length = tcp_header_length >> 2                              #SHR 4 ; SHL 2 -> SHR 2
 
-          #retrieve port source/dest
           port_src_str = packet_str[ETH_HLEN+ip_header_length:ETH_HLEN+ip_header_length+2]
           port_dst_str = packet_str[ETH_HLEN+ip_header_length+2:ETH_HLEN+ip_header_length+4]
-
           port_src = int(self.toHex(port_src_str),16)
           port_dst = int(self.toHex(port_dst_str),16)
 
-          # Gather some of the TCP stream features
-          tcp_ip_features = {'src_port': port_src, 'dst_port': port_dst,
-                             'src_ip': str(ipaddress.ip_address(ip_src)),
-                             'dst_ip': str(ipaddress.ip_address(ip_dst))}
-
-          #calculate payload offset
           payload_offset = ETH_HLEN + ip_header_length + tcp_header_length
 
-          #payload_string contains only packet payload
-          payload_string = packet_str[(payload_offset):(len(packet_bytearray))].decode()
+          # TCP checksum is often offloaded to hardware and we get an unreliable value
+          #  16              17              18              19
+          #  0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
+          # +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+          # |           Checksum            |         Urgent Pointer        |
+          # +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 
-          #CR + LF (substring to find)
-          crlf = "\r\n"
+          #  checksum = packet_bytearray[ETH_HLEN + ip_header_length + 16:ETH_HLEN + ip_header_length + 18]
+          checksum = hash(packet_bytearray[payload_offset:].hex()) if self.deduplicate else None
+
+          tcpIpMeta = TcpIpMeta(src_port=port_src, dst_port=port_dst,
+                             src_ip=str(ipaddress.ip_address(ip_src)),
+                             dst_ip=str(ipaddress.ip_address(ip_dst)),
+                             tcp_data_checksum=checksum)
+
+          #payload_string contains only packet payload
+          payload_string = packet_str[(payload_offset):(len(packet_bytearray))].decode(errors='replace')
 
           #current_Key contains ip source/dest and port source/map
           #useful for direct bpf_sessions map access
@@ -291,15 +320,21 @@ class PCPBCCModule(PCPBCCBase):
           if ((payload_string[:3] == "GET") or (payload_string[:4] == "POST")   or (payload_string[:4] == "HTTP")  \
           or ( payload_string[:3] == "PUT") or (payload_string[:6] == "DELETE") or (payload_string[:4] == "HEAD") ):
             #match: HTTP GET/POST packet found
-            if (crlf in payload_string):
+            if (CRLF in payload_string):
               #url entirely contained in first packet -> print it all
-              substring = self.substringUntilCRLF(payload_string)
-              self.store_in_cache(substring, tcp_ip_features)
+              (first_line, headers) = self.first_line_and_headers(payload_string)
+              httpMeta = self.in_httpMeta(first_line, tcpIpMeta, headers)
+              if self.detect_ws:
+                  i, httpMeta = self.is_websocket_upgrade(httpMeta)
+              self.store_in_cache(httpMeta)
 
               #delete current_Key from bpf_sessions, url already printed. current session not useful anymore
               try:
-                del self.bpf_sessions[current_Key]
-              except:
+                  if current_Key in self.bpf_sessions:
+                    del self.bpf_sessions[current_Key]
+                  else:
+                      self.log("error deleting key from bpf map, key absent")
+              except Exception as e:
                 self.error("error during delete from bpf map ")
             else:
               #url NOT entirely contained in first packet
@@ -317,13 +352,13 @@ class PCPBCCModule(PCPBCCBase):
                 #first part of the HTTP GET/POST url is already present in local dictionary (prev_payload_string)
                 prev_payload_string = local_dictionary[binascii.hexlify(current_Key)]
                 #looking for CR+LF in current packet.
-                if (crlf in payload_string):
+                if (CRLF in payload_string):
                   #last packet. containing last part of HTTP GET/POST url splitted in N packets.
                   #append current payload
                   prev_payload_string += payload_string
                   #print HTTP GET/POST url
                   substring = self.substringUntilCRLF(payload_string)
-                  store_in_cache(substring, tcp_ip_features)
+                  self.store_in_cache(substring, tcpIpMeta)
                   #clean bpf_sessions & local_dictionary
                   try:
                     del self.bpf_sessions[current_Key]
@@ -356,33 +391,133 @@ class PCPBCCModule(PCPBCCBase):
           if (((packet_count) % CLEANUP_N_PACKETS) == 0):
             self.cleanup()
 
-    def store_in_cache(self, http_line, tcp_ip_features, headers=''):
+    def first_line_and_headers(self, payload_string):
+        """Extract first line (like 'GET /index.html HTTP/1.1') and headers that would be in the payload"""
+        def split_header(http_header):
+            kv = HTTP_HEADER_REGEX.match(http_header)
+            if kv is None: return ""
+            g1 = kv.group(1)
+            g2 = kv.group(2)
+            if g1 and g2: return {g1: g2}
+        lines = payload_string.split(CRLF, MAX_N_HEADER)
+        if len(lines) <= 1: # No CRLF in the payload
+            return "", []
+        headers = list(filter(
+            lambda l: l != "",
+            map(split_header, lines[1:])
+        ))
+        return lines[0], headers
+
+    def in_httpMeta(self, http_line, tcpIpMeta, headers=[]):
         """ Extract data from an HTTP line like 'GET /index HTTP/1.1'
-            or 'HTTP/1.1 404 Not Found'
+            or 'HTTP/1.1 404 Not Found' in an httpMeta* object
         """
-        # TODO Add headers
-        httpMeta = HttpMetaIncorrect(**tcp_ip_features, line=http_line)
+        httpMeta = HttpMetaIncorrect(line=http_line,
+                                     src_port=tcpIpMeta.src_port,
+                                     dst_port=tcpIpMeta.dst_port,
+                                     src_ip=tcpIpMeta.src_ip,
+                                     dst_ip=tcpIpMeta.dst_ip,
+                                     tcp_data_checksum=tcpIpMeta.tcp_data_checksum,
+                                     )
         m = self.http_req_ans.match(http_line)
         if m is None:
             pass
         elif (m['http_response']):
             httpMeta = HttpMetaResponse(
+                src_port=tcpIpMeta.src_port,
+                dst_port=tcpIpMeta.dst_port,
+                src_ip=tcpIpMeta.src_ip,
+                dst_ip=tcpIpMeta.dst_ip,
+                tcp_data_checksum=tcpIpMeta.tcp_data_checksum,
                 code=int(m['code']),
                 txt=m['txt'],
                 headers=headers,
-                **tcp_ip_features,
+                is_websocket_upgrade=None,
             )
         elif (m['http_request']):
             httpMeta = HttpMetaRequest(
+                src_port=tcpIpMeta.src_port,
+                dst_port=tcpIpMeta.dst_port,
+                src_ip=tcpIpMeta.src_ip,
+                dst_ip=tcpIpMeta.dst_ip,
+                tcp_data_checksum=tcpIpMeta.tcp_data_checksum,
                 method=m['method'],
                 path=m['path'],
                 headers=headers,
-                **tcp_ip_features,
+                is_websocket_upgrade=None,
             )
+        return httpMeta
 
-        self.lock.acquire()
-        self.cache.appendleft(httpMeta)
-        self.lock.release()
+    def store_in_cache(self, httpMeta):
+        """ Store an httpMeta in cache, serialising fields when necessary """
+        # Serialize headers
+        t = type(httpMeta)
+        if t is HttpMetaRequest or t is HttpMetaResponse or t is HttpMetaIncorrect:
+            self.lock.acquire()
+            if self.deduplicate and len(self.cache) > 0 and self.cache[0].tcp_data_checksum == httpMeta.tcp_data_checksum:
+                pass
+            else:
+                self.cache.appendleft(httpMeta)
+            self.lock.release()
+            return
+        self.log("Warning, not stored (incorrect type): "+str(httpMeta))
+
+
+    def is_websocket_upgrade(self, httpMeta):
+        """ Return non 0 code if the httpMeta* structure is a websocket upgrade. Return 1 for the client request and 2 for the server answer. See https://tools.ietf.org/html/rfc6455.
+            The second return is the updated httpMeta
+        """
+        def put_header_dict_lower():
+            """ Put all in one dictionary, with lower case key as they are case insensitive according to RFC. Account for the fact that key may be duplicated """
+            headers_dict = {}
+            for d in httpMeta.headers:
+                for k,v in d.items(): # Should run once as these dictonary contain only one value
+                    # Headers key are case insensitive
+                    kl = k.lower()
+                    l = headers_dict.get(kl, [])
+                    l.append(v)
+                    headers_dict[kl] = l
+            return headers_dict
+
+        def header_with_value(headers_dict, header_key, required_header_value):
+            """ Return None if header_key is not in headers_dict.
+                Return True if a given header_key is present with a value
+                header_value (splitted on ',', case insensitive), False otherwise """
+            key = header_key.lower()
+            req_val = required_header_value.lower()
+
+            if key not in headers_dict: return None
+            for val in headers_dict[key]:
+                if req_val in map(lambda l: l.lower(), val.split(", ")):
+                    return True
+            return False
+
+        def perform_detection():
+            if type(httpMeta) is HttpMetaIncorrect:
+                return 0
+            # Page 21, https://tools.ietf.org/html/rfc6455#section-4.2.1, verifying only the minimum
+            if type(httpMeta) is HttpMetaRequest:
+                if httpMeta.method == "GET":
+                    headers_dict = put_header_dict_lower()
+                    if header_with_value(headers_dict, "upgrade", "websocket") \
+                            and headers_dict.get("sec-websocket-key") \
+                            and headers_dict.get("sec-websocket-version"):
+                        return 1
+                return 0
+            # Page 19, https://tools.ietf.org/html/rfc6455#section-4.1, verifying only the minimum
+            if type(httpMeta) is HttpMetaResponse:
+                if httpMeta.code == 101:
+                    headers_dict = put_header_dict_lower()
+                    if header_with_value(headers_dict, "upgrade", "websocket") \
+                            and header_with_value(headers_dict, "connection", "upgrade") \
+                            and headers_dict.get("sec-websocket-accept"):
+                        return 2
+                return 0
+            self.log("is_websocket_upgrade: incorrect type of argument")
+            return 0
+
+        code = perform_detection()
+        return code, httpMeta._replace(is_websocket_upgrade=code)
 
     # pylint: disable=bad-continuation
     def metrics(self):
@@ -390,21 +525,54 @@ class PCPBCCModule(PCPBCCBase):
         name = BASENS
         self.items = (
             # Name - reserved - type - semantics - units - help
-            (name + 'laddr', None, PM_TYPE_STRING, PM_SEM_INSTANT, units_none, 'local address'),
-            (name + 'lport', None, PM_TYPE_U32, PM_SEM_INSTANT, units_none, 'local port'),
+            (name + 'saddr', None, PM_TYPE_STRING, PM_SEM_INSTANT, units_none, 'source address'),
+            (name + 'sport', None, PM_TYPE_U32, PM_SEM_INSTANT, units_none, 'source port'),
             (name + 'daddr', None, PM_TYPE_STRING, PM_SEM_INSTANT, units_none, 'destination '
                                                                                'address'),
             (name + 'dport', None, PM_TYPE_U32, PM_SEM_INSTANT, units_none, 'destination port'),
             (name + 'identifier', None, PM_TYPE_STRING, PM_SEM_INSTANT, units_none, 'method or code'),
             (name + 'param', None, PM_TYPE_STRING, PM_SEM_INSTANT, units_none, 'path or message'),
             (name + 'headers', None, PM_TYPE_STRING, PM_SEM_INSTANT, units_none, 'http headers'),
+            (name + 'ws_upgrade', None, PM_TYPE_U32, PM_SEM_INSTANT, units_none, 'does it correspond to a websocket handshake?'),
         )
         return True, self.items
 
     def compile(self):
         """ Compile BPF """
         try:
-            self.bpf = BPF(src_file=bpf_src)
+            if not self.bpf_text:
+                with open(path.dirname(__file__) + '/../' + bpf_src) as src:
+                    self.bpf_text = src.read()
+
+                if self.ports:
+                    filterp_dst = " && ".join(["key.dst_port != %d" % port for port in self.ports])
+                    filterp_src = " && ".join(["key.src_port != %d" % port for port in self.ports])
+                    filterp = " && ".join(["(%s)" % filt for filt in [filterp_dst, filterp_src]])
+                    filter_txt = "if (%s) { goto DROP; }" % filterp
+                    self.bpf_text = self.bpf_text.replace("//FILTER_LDPORT", filter_txt)
+                if self.nports:
+                    filterp_dst = " || ".join(["key.dst_port == %d" % port for port in self.nports])
+                    filterp_src = " || ".join(["key.src_port == %d" % port for port in self.nports])
+                    filterp = " || ".join(["(%s)" % filt for filt in [filterp_dst, filterp_src]])
+                    filter_txt = "if (%s) { goto DROP; }" % filterp
+                    self.bpf_text = self.bpf_text.replace("//FILTER_LDPORT", filter_txt)
+                if self.dports:
+                    filterp = " && ".join(["key.dst_port != %d" % port for port in self.dports])
+                    filter_txt = "if (%s) { goto DROP; }" % filterp
+                    self.bpf_text = self.bpf_text.replace("//FILTER_DPORT", filter_txt)
+                if self.sports:
+                    filterp = " && ".join(["key.src_port != %d" % port for port in self.sports])
+                    filter_txt = "if (%s) { goto DROP; }" % filterp
+                    self.bpf_text = self.bpf_text.replace("//FILTER_LPORT", filter_txt)
+
+                if self.ips:
+                    filteri_dst = " && ".join(["key.dst_ip != 0x%s" % ip.hex() for ip in self.ips])
+                    filteri_src = " && ".join(["key.src_ip != 0x%s" % ip.hex() for ip in self.ips])
+                    filteri = " && ".join(["(%s)" % filt for filt in [filteri_dst, filteri_src]])
+                    filter_txt = "if (%s) { goto DROP; }" % filteri
+                    self.bpf_text = self.bpf_text.replace("//FILTER_IP", filter_txt)
+
+            self.bpf = BPF(text=self.bpf_text)
             #load eBPF program http_filter of type SOCKET_FILTER into the kernel eBPF vm
             #more info about eBPF program types
             #http://man7.org/linux/man-pages/man2/bpf.2.html
@@ -419,6 +587,9 @@ class PCPBCCModule(PCPBCCBase):
             #set it as blocking socket
             sock.setblocking(True)
             self.bpf_sessions = self.bpf.get_table("sessions")
+
+            if self.debug:
+                self.log("BPF to be compiled:\n" + self.bpf_text.strip())
 
             self.thread = Thread(name="socketpoller", target=self.http_packet_poller)
             self.thread.setDaemon(True)
@@ -458,7 +629,8 @@ class PCPBCCModule(PCPBCCBase):
                 # HttpMetaRequest or HttpMetaResponse or HttpMetaIncorrect
                 4: lambda h: noneOnAttrErr(lambda: h.method) or noneOnAttrErr(lambda: str(h.code)) or None,
                 5: lambda h: noneOnAttrErr(lambda: h.path) or noneOnAttrErr(lambda: h.txt) or noneOnAttrErr(lambda: h.line),
-                6: lambda h: noneOnAttrErr(lambda: h.headers) or noneOnAttrErr(lambda: h.headers) or None,
+                6: lambda h: noneOnAttrErr(lambda: json.dumps(h.headers)) or noneOnAttrErr(lambda: json.dumps(h.headers)) or None,
+                7: lambda h: noneOnAttrErr(lambda: h.is_websocket_upgrade)
             }
 
             self.lock.acquire()
