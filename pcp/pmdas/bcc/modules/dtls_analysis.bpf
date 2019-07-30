@@ -39,7 +39,7 @@ BPF_HASH(sessions, struct Key, struct Leaf, 1024);
   return  0 -> DROP the packet
   return -1 -> KEEP the packet and return it to user space (userspace can read it from the socket_fd )
 */
-int udp_analysis(struct __sk_buff *skb) {
+int dtls_analysis(struct __sk_buff *skb) {
 
 	u8 *cursor = 0;
 
