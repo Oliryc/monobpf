@@ -5,7 +5,7 @@
 #define IP_UDP 	17
 #define UDP_HLEN 14
 #define ETH_HLEN 14
-#define PAY_LEN_CMP 5 // Payload length used for comparison
+#define PAY_LEN_CMP 4 // Payload length used for comparison
 
 enum TlsContentType {
   ChangeCipherSpec = 20,
@@ -101,7 +101,7 @@ int dtls_analysis(struct __sk_buff *skb) {
   goto KEEP; // TODO Store in session map
   // TODO Adapt to TLS beyond this line
 
-  // We will identify DTLS 1.0 packets based on the Contentype byte (1 byte)
+  // We will identify DTLS 1.* packets based on the Contentype byte (1 byte)
   // and the version bytes (2 bytes), per
   // https://tools.ietf.org/html/rfc4346#page-18 and
   // https://tools.ietf.org/html/rfc4347#page-20.
@@ -144,9 +144,9 @@ int dtls_analysis(struct __sk_buff *skb) {
       break;
   }
 
-  // Looks like TLS, check it is DTLS 1.0
+  // Looks like TLS, check it is DTLS 1.*
 	TLS_MATCH:
-  if (p[1] == 0xfe && p[2] == 0xff) {
+  if (p[1] == 0xfe) {
     goto DTLS_MATCH;
   }
   goto DROP;
