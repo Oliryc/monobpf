@@ -47,7 +47,6 @@ from modules.pcpbcc import PCPBCCBase
 # BPF program
 #
 bpf_src = "modules/http_analysis.bpf"
-# Compat with kernel < 4.16, bcc < 0.6
 
 #
 # PCP BCC PMDA constants
