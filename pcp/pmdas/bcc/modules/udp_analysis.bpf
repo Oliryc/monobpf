@@ -5,6 +5,14 @@
 #define IP_UDP 	17
 #define UDP_HLEN 14
 #define ETH_HLEN 14
+#define PAY_LEN_CMP 5 // Payload length used for comparison
+
+enum TlsContentType {
+  ChangeCipherSpec = 20,
+  Alert = 21,
+  Handshake = 22,
+  ApplicationData = 23,
+};
 
 struct Key {
 	u32 src_ip;               //source ip
@@ -93,59 +101,58 @@ int udp_analysis(struct __sk_buff *skb) {
   goto KEEP; // TODO Store in session map
   // TODO Adapt to TLS beyond this line
 
-	//http://stackoverflow.com/questions/25047905/http-request-minimum-size-in-bytes
-	//minimum length of http request is always geater than 7 bytes
-	//avoid invalid access memory
-	//include empty payload
-	if(payload_length < 7) {
+  // We will identify DTLS 1.0 packets based on the Contentype byte (1 byte)
+  // and the version bytes (2 bytes), per
+  // https://tools.ietf.org/html/rfc4346#page-18 and
+  // https://tools.ietf.org/html/rfc4347#page-20.
+  // A length field of 2 bytes is also required.
+	if(payload_length < PAY_LEN_CMP) {
 		goto DROP;
 	}
 
-	//load first 7 byte of payload into p (payload_array)
+	//load first bytes of payload into p (payload_array)
 	//direct access to skb not allowed
-	unsigned long p[7];
+	unsigned long p[PAY_LEN_CMP];
 	int i = 0;
-	for (i = 0; i < 7; i++) {
-		p[i] = load_byte(skb , payload_offset + i);
+	for (i = 0; i < PAY_LEN_CMP; i++) {
+		p[i] = load_byte(skb, payload_offset + i);
 	}
 
-	//find a match with an HTTP message
-	//HTTP
-	if ((p[0] == 'H') && (p[1] == 'T') && (p[2] == 'T') && (p[3] == 'P')) {
-		goto HTTP_MATCH;
-	}
-	//GET
-	if ((p[0] == 'G') && (p[1] == 'E') && (p[2] == 'T')) {
-		goto HTTP_MATCH;
-	}
-	//POST
-	if ((p[0] == 'P') && (p[1] == 'O') && (p[2] == 'S') && (p[3] == 'T')) {
-		goto HTTP_MATCH;
-	}
-	//PUT
-	if ((p[0] == 'P') && (p[1] == 'U') && (p[2] == 'T')) {
-		goto HTTP_MATCH;
-	}
-	//DELETE
-	if ((p[0] == 'D') && (p[1] == 'E') && (p[2] == 'L') && (p[3] == 'E') && (p[4] == 'T') && (p[5] == 'E')) {
-		goto HTTP_MATCH;
-	}
-	//HEAD
-	if ((p[0] == 'H') && (p[1] == 'E') && (p[2] == 'A') && (p[3] == 'D')) {
-		goto HTTP_MATCH;
-	}
+	//find a match with a TLS content type
+  switch (p[0]) {
+    case ChangeCipherSpec:
+      goto TLS_MATCH;
+      break;
+    case Alert:
+      goto TLS_MATCH;
+      break;
+    case Handshake:
+      goto TLS_MATCH;
+      break;
+    case ApplicationData:
+      goto TLS_MATCH;
+      break;
+    default:
+      /*
+      //check if packet belong to a TLS session
+      struct Leaf * lookup_leaf = sessions.lookup(&key);
+      if(lookup_leaf) {
+        goto KEEP;
+      }
+      goto DROP;
+      */
+      break;
+  }
 
-	//no HTTP match
-	//check if packet belong to an HTTP session
-	struct Leaf * lookup_leaf = sessions.lookup(&key);
-	if(lookup_leaf) {
-		//send packet to userspace
-		goto KEEP;
-	}
-	goto DROP;
+  // Looks like TLS, check it is DTLS 1.0
+	TLS_MATCH:
+  if (p[1] == 0xfe && p[2] == 0xff) {
+    goto DTLS_MATCH;
+  }
+  goto DROP;
 
-	//keep the packet and send it to userspace retruning -1
-	HTTP_MATCH:
+	//keep the packet and store its key in the sessions
+	DTLS_MATCH:
 	//if not already present, insert into map <Key, Leaf>
 	sessions.lookup_or_init(&key,&zero);
 
