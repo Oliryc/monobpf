@@ -66,6 +66,15 @@ class TlsContentType(Enum):
     HANDSHAKE = 22
     APPLICATION_DATA = 23
 
+    @classmethod
+    def nameOrNone(cls, n):
+        """ Return the name corresponding to the value, if any. None otherwise """
+        try:
+            return cls(n)
+        except ValueError:
+            return None
+
+
 # Common for all subsequent Record Layer: https://tools.ietf.org/html/rfc4347#section-4.1
 UdpIpFields = [
     'src_port',
@@ -80,30 +89,19 @@ UdpIpMeta = namedtuple('UdpIpMeta', UdpIpFields)
 
 # Two ClientHello are sent and only the second one has a non empty cookie. (Cf
 # schema of exchange page 11 of the RFC)
-dtlsMetaClientHelloFields = UdpIpFields[:]
-dtlsMetaClientHelloFields.extend([
-    'version', # Protocol version. It is stored as 1’s complement on the wire, but is a float here
-    'seq_num', # Sequence number
-    'cookie', # Cookie
+# Most common metadata, comming from DTLSPlainText https://tools.ietf.org/html/rfc4347#page-6
+dtlsMetaFields = UdpIpFields[:]
+dtlsMetaFields.extend([
+    'content_type',
+    'version', # Protocol version. It is stored as 1’s complement on the wire, but is a string like '1.0' or '1.2' here
+    'epoch',
+    'sequence_number',
+    'length',
 ])
-DtlsMetaClientHello = namedtuple('DtlsMetaClientHello', dtlsMetaClientHelloFields)
+DtlsMeta = namedtuple('DtlsMetaClientHello', dtlsMetaFields)
 
-dtlsMetaClientHelloVerifyFields = UdpIpFields[:]
-dtlsMetaClientHelloVerifyFields.extend([
-    'version',
-    'cookie',
-])
-DtlsMetaClientHelloVerify = namedtuple('DtlsMetaClientHelloVerify', dtlsMetaClientHelloVerifyFields)
-
-# For other type of Record Layer
-# TODO Add other functionnalities?
-udpOtherFields = UdpIpFields[:]
-udpOtherFields.extend([
-])
-UdpOther = namedtuple('UdpOther', udpOtherFields)
-
+CLEANUP_N_PACKETS  = 50       #run cleanup every CLEANUP_N_PACKETS packets received
 MAX_AGE_SECONDS    = 30       #max age entry in bpf_sessions map
-
 
 #
 # PCP BCC Module
@@ -312,132 +310,66 @@ class PCPBCCModule(PCPBCCBase):
           #useful for direct bpf_sessions map access
           current_Key = self.bpf_sessions.Key(ip_src,ip_dst,port_src,port_dst)
 
-          #looking for HTTP GET/POST request
-          if ((payload_string[:3] == "GET") or (payload_string[:4] == "POST")   or (payload_string[:4] == "HTTP")  \
-          or ( payload_string[:3] == "PUT") or (payload_string[:6] == "DELETE") or (payload_string[:4] == "HEAD") ):
-            #match: HTTP GET/POST packet found
-            if (CRLF in payload_string):
-              #url entirely contained in first packet -> print it all
-              (first_line, headers) = self.first_line_and_headers(payload_string)
-              udpMeta = self.in_udpMeta(first_line, UdpIp, headers)
-              if self.detect_ws:
-                  i, udpMeta = self.is_websocket_upgrade(udpMeta)
-              self.store_in_cache(udpMeta)
+          dtlsMeta = self.inDtlsMeta(udpIp, packet_bytearray[payload_offset:payload_offset+68])
+          self.log("============= "+str(dtlsMeta))
 
-              #delete current_Key from bpf_sessions, url already printed. current session not useful anymore
-              try:
-                  if current_Key in self.bpf_sessions:
-                    del self.bpf_sessions[current_Key]
-                  else:
-                      self.log("error deleting key from bpf map, key absent")
-              except Exception as e:
-                self.error("error during delete from bpf map ")
-            else:
-              #url NOT entirely contained in first packet
-              #not found \r\n in payload.
-              #save current part of the payload_string in dictionary <key(ips,ipd,ports,portd),payload_string>
-              local_dictionary[binascii.hexlify(current_Key)] = payload_string
-          else:
-            #NO match: HTTP GET/POST  NOT found
-
-            #check if the packet belong to a session saved in bpf_sessions
-            if (current_Key in self.bpf_sessions):
-              #check id the packet belong to a session saved in local_dictionary
-              #(local_dictionary mantains HTTP GET/POST url not printed yet because splitted in N packets)
-              if (binascii.hexlify(current_Key) in local_dictionary):
-                #first part of the HTTP GET/POST url is already present in local dictionary (prev_payload_string)
-                prev_payload_string = local_dictionary[binascii.hexlify(current_Key)]
-                #looking for CR+LF in current packet.
-                if (CRLF in payload_string):
-                  #last packet. containing last part of HTTP GET/POST url splitted in N packets.
-                  #append current payload
-                  prev_payload_string += payload_string
-                  #print HTTP GET/POST url
-                  substring = self.substringUntilCRLF(payload_string)
-                  self.store_in_cache(substring, UdpIp)
-                  #clean bpf_sessions & local_dictionary
-                  try:
-                    del self.bpf_sessions[current_Key]
-                    del local_dictionary[binascii.hexlify(current_Key)]
-                  except:
-                    print ("error deleting from map or dictionary")
-                else:
-                  #NOT last packet. containing part of HTTP GET/POST url splitted in N packets.
-                  #append current payload
-                  prev_payload_string += payload_string
-                  #check if not size exceeding (usually HTTP GET/POST url < 8K )
-                  if (len(prev_payload_string) > MAX_URL_STRING_LEN):
-                    self.log("url too long")
-                    try:
-                      del self.bpf_sessions[current_Key]
-                      del local_dictionary[binascii.hexlify(current_Key)]
-                    except:
-                      print ("error deleting from map or dict")
-                  #update dictionary
-                  local_dictionary[binascii.hexlify(current_Key)] = prev_payload_string
-              else:
-                #first part of the HTTP GET/POST url is NOT present in local dictionary
-                #bpf_sessions contains invalid entry -> delete it
-                try:
-                    del self.bpf_sessions[current_Key]
-                except Exception as e:
-                    print ("error del bpf_session: "+str(e))
+          self.store_in_cache(dtlsMeta)
 
           #check if dirty entry are present in bpf_sessions
           if (((packet_count) % CLEANUP_N_PACKETS) == 0):
             self.cleanup()
 
-    def in_udpMeta(self, udp_line, UdpIp, headers=[]):
-        """ Extract data from a DTLS/UDP packet in an udpMeta* object
-        """
-        udpMeta = UdpOther(src_port=UdpIp.src_port,
-                                     dst_port=UdpIp.dst_port,
-                                     src_ip=UdpIp.src_ip,
-                                     dst_ip=UdpIp.dst_ip,
-                                     udp_payload_checksum=UdpIp.udp_payload_checksum,
-                                     )
-        m = self.udp_req_ans.match(udp_line)
-        if m is None:
-            pass
-        elif (m['udp_response']):
-            udpMeta = DtlsMetaClientHelloVerify(
-                src_port=UdpIp.src_port,
-                dst_port=UdpIp.dst_port,
-                src_ip=UdpIp.src_ip,
-                dst_ip=UdpIp.dst_ip,
-                udp_payload_checksum=UdpIp.udp_payload_checksum,
-                code=int(m['code']),
-                txt=m['txt'],
-                headers=headers,
-                is_websocket_upgrade=None,
-            )
-        elif (m['udp_request']):
-            udpMeta = DtlsMetaClientHello(
-                src_port=UdpIp.src_port,
-                dst_port=UdpIp.dst_port,
-                src_ip=UdpIp.src_ip,
-                dst_ip=UdpIp.dst_ip,
-                udp_payload_checksum=UdpIp.udp_payload_checksum,
-                method=m['method'],
-                path=m['path'],
-                headers=headers,
-                is_websocket_upgrade=None,
-            )
-        return udpMeta
+    def inDtlsMeta(self, udpIpMeta, firstBytes):
+        """ Extract data from a DTLS/UDP the first 68 bytes of a DTLS packet in
+            an DtlsMeta object """
+        ct = None
+        version = None
+        epoch = None
+        sequence_number = None
+        length = None
+        position = 0 # Position in packet
+
+        #ct = TlsContentType.nameOrNone(int.from_bytes(firstBytes[0], byteorder='big', signed=False))
+        ct = TlsContentType.nameOrNone(firstBytes[position])
+        position +=1
+        if ct is not None: # Found known message type, extract header data
+            version_major = firstBytes[position]
+            position += 1
+            version_major ^= 0xFF
+            version_minor = firstBytes[position]
+            position += 1
+            version_minor ^= 0xFF
+            version = "%d.%d" % (version_major, version_minor)
+            epoch = int.from_bytes(firstBytes[position:position+2], byteorder='big', signed=False)
+            position += 2
+            seq = int.from_bytes(firstBytes[position:position+6], byteorder='big', signed=False)
+            position += 6
+            length = int.from_bytes(firstBytes[position:position+2], byteorder='big', signed=False)
+            position += 2
+
+        dtlsMeta = DtlsMeta(src_port=udpIpMeta.src_port,
+                            dst_port=udpIpMeta.dst_port,
+                            src_ip=udpIpMeta.src_ip,
+                            dst_ip=udpIpMeta.dst_ip,
+                            udp_payload_checksum=udpIpMeta.udp_payload_checksum,
+                            content_type=ct,
+                            version=version,
+                            epoch=epoch,
+                            sequence_number=seq,
+                            length=length,
+                            )
+        return dtlsMeta
 
     def store_in_cache(self, udpMeta):
         """ Store an udpMeta in cache, serialising fields when necessary """
         # Serialize headers
-        t = type(udpMeta)
-        if t is DtlsMetaClientHello or t is DtlsMetaClientHelloVerify or t is UdpOther:
-            self.lock.acquire()
-            if self.deduplicate and len(self.cache) > 0 and self.cache[0].udp_payload_checksum == udpMeta.udp_payload_checksum:
-                pass
-            else:
-                self.cache.appendleft(udpMeta)
-            self.lock.release()
-            return
-        self.log("Warning, not stored (incorrect type): "+str(udpMeta))
+        self.lock.acquire()
+        if self.deduplicate and len(self.cache) > 0 and self.cache[0].udp_payload_checksum == udpMeta.udp_payload_checksum:
+            pass
+        else:
+            self.cache.appendleft(udpMeta)
+        self.lock.release()
+        return
 
 
     def is_websocket_upgrade(self, udpMeta):
@@ -507,10 +439,11 @@ class PCPBCCModule(PCPBCCBase):
             (name + 'daddr', None, PM_TYPE_STRING, PM_SEM_INSTANT, units_none, 'destination '
                                                                                'address'),
             (name + 'dport', None, PM_TYPE_U32, PM_SEM_INSTANT, units_none, 'destination port'),
-            (name + 'identifier', None, PM_TYPE_STRING, PM_SEM_INSTANT, units_none, 'method or code'),
-            (name + 'param', None, PM_TYPE_STRING, PM_SEM_INSTANT, units_none, 'path or message'),
-            (name + 'headers', None, PM_TYPE_STRING, PM_SEM_INSTANT, units_none, 'udp headers'),
-            (name + 'ws_upgrade', None, PM_TYPE_U32, PM_SEM_INSTANT, units_none, 'does it correspond to a websocket handshake?'),
+            (name + 'content_type', None, PM_TYPE_STRING, PM_SEM_INSTANT, units_none, 'type of DTLS message (handshake, data…)'),
+            (name + 'version', None, PM_TYPE_STRING, PM_SEM_INSTANT, units_none, 'DTLS version'),
+            (name + 'epoch', None, PM_TYPE_U32, PM_SEM_INSTANT, units_none, 'epoch header'),
+            (name + 'sequence_number', None, PM_TYPE_U32, PM_SEM_INSTANT, units_none, 'sequence number'),
+            (name + 'length', None, PM_TYPE_U32, PM_SEM_INSTANT, units_none, 'length of the DTLS content'),
         )
         return True, self.items
 
@@ -602,12 +535,11 @@ class PCPBCCModule(PCPBCCBase):
                 1: lambda u: noneOnAttrErr(lambda: u.src_port),
                 2: lambda u: noneOnAttrErr(lambda: u.dst_ip),
                 3: lambda u: noneOnAttrErr(lambda: u.dst_port),
-                # We are getting different type of object, we try in this order:
-                # DtlsMetaClientHello or DtlsMetaClientHelloVerify or UdpOther
-                4: lambda u: noneOnAttrErr(lambda: u.method) or noneOnAttrErr(lambda: str(u.code)) or None,
-                5: lambda u: noneOnAttrErr(lambda: u.path) or noneOnAttrErr(lambda: u.txt) or noneOnAttrErr(lambda: u.line),
-                6: lambda u: noneOnAttrErr(lambda: json.dumps(u.headers)) or noneOnAttrErr(lambda: json.dumps(u.headers)) or None,
-                7: lambda u: noneOnAttrErr(lambda: u.is_websocket_upgrade)
+                4: lambda u: noneOnAttrErr(lambda: u.content_type.name),
+                5: lambda u: noneOnAttrErr(lambda: u.version),
+                6: lambda u: noneOnAttrErr(lambda: u.epoch),
+                7: lambda u: noneOnAttrErr(lambda: u.sequence_number),
+                8: lambda u: noneOnAttrErr(lambda: u.length),
             }
 
             self.lock.acquire()
