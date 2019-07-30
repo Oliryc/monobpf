@@ -16,7 +16,7 @@
 # MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 # GNU General Public License for more details.
 #
-""" PCP BCC PMDA udp_analysis module (with support for DTLS 1.0) """
+""" PCP BCC PMDA dtls_analysis module (with support for DTLS 1.0) """
 
 # pylint: disable=invalid-name, too-few-public-methods, too-many-instance-attributes
 
@@ -47,13 +47,13 @@ from modules.pcpbcc import PCPBCCBase
 #
 # BPF program
 #
-bpf_src = "modules/udp_analysis.bpf"
+bpf_src = "modules/dtls_analysis.bpf"
 
 #
 # PCP BCC PMDA constants
 #
-MODULE = 'udp_analysis'
-BASENS = 'proc.io.net.udp.'
+MODULE = 'dtls_analysis'
+BASENS = 'proc.io.net.dtls.'
 units_bytes = pmUnits(1, 0, 0, PM_SPACE_BYTE, 0, 0)
 units_usecs = pmUnits(0, 1, 0, 0, PM_TIME_USEC, 0)
 units_none = pmUnits(0, 0, 0, 0, 0, 0)
@@ -232,7 +232,7 @@ class PCPBCCModule(PCPBCCBase):
           ETH_HLEN = 14
 
           #IP HEADER
-          #udps://tools.ietf.org/html/rfc791
+          #https://tools.ietf.org/html/rfc791
           # 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
           # +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
           # |Version|  IHL  |Type of Service|          Total Length         |
@@ -373,7 +373,7 @@ class PCPBCCModule(PCPBCCBase):
 
 
     def is_websocket_upgrade(self, udpMeta):
-        """ Return non 0 code if the udpMeta* structure is a websocket upgrade. Return 1 for the client request and 2 for the server answer. See udps://tools.ietf.org/html/rfc6455.
+        """ Return non 0 code if the udpMeta* structure is a websocket upgrade. Return 1 for the client request and 2 for the server answer. See https://tools.ietf.org/html/rfc6455.
             The second return is the updated udpMeta
         """
         def put_header_dict_lower():
@@ -404,7 +404,7 @@ class PCPBCCModule(PCPBCCBase):
         def perform_detection():
             if type(udpMeta) is UdpOther:
                 return 0
-            # Page 21, udps://tools.ietf.org/html/rfc6455#section-4.2.1, verifying only the minimum
+            # Page 21, https://tools.ietf.org/html/rfc6455#section-4.2.1, verifying only the minimum
             if type(udpMeta) is DtlsMetaClientHello:
                 if udpMeta.method == "GET":
                     headers_dict = put_header_dict_lower()
@@ -413,7 +413,7 @@ class PCPBCCModule(PCPBCCBase):
                             and headers_dict.get("sec-websocket-version"):
                         return 1
                 return 0
-            # Page 19, udps://tools.ietf.org/html/rfc6455#section-4.1, verifying only the minimum
+            # Page 19, https://tools.ietf.org/html/rfc6455#section-4.1, verifying only the minimum
             if type(udpMeta) is DtlsMetaClientHelloVerify:
                 if udpMeta.code == 101:
                     headers_dict = put_header_dict_lower()
@@ -486,7 +486,7 @@ class PCPBCCModule(PCPBCCBase):
             #load eBPF program udp_filter of type SOCKET_FILTER into the kernel eBPF vm
             #more info about eBPF program types
             #udp://man7.org/linux/man-pages/man2/bpf.2.html
-            function_udp_filter = self.bpf.load_func("udp_analysis", BPF.SOCKET_FILTER)
+            function_udp_filter = self.bpf.load_func("dtls_analysis", BPF.SOCKET_FILTER)
             #create raw socket, bind it to interface
             #attach bpf program to socket created
             BPF.attach_raw_socket(function_udp_filter, self.interface)
