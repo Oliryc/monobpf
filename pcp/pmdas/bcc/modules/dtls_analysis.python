@@ -123,7 +123,7 @@ class PCPBCCModule(PCPBCCBase):
         self.ips = []
         self.max_packet_length = 4096 # max packet length on the interface in the config file
         self.session_count = 20
-        self.debug = True
+        self.debug = False
         self.bpf_sessions = None
         self.socket_fd = None
         self.buffer_page_count = 64
@@ -311,7 +311,6 @@ class PCPBCCModule(PCPBCCBase):
           current_Key = self.bpf_sessions.Key(ip_src,ip_dst,port_src,port_dst)
 
           dtlsMeta = self.inDtlsMeta(udpIp, packet_bytearray[payload_offset:payload_offset+68])
-          self.log("============= "+str(dtlsMeta))
 
           self.store_in_cache(dtlsMeta)
 
