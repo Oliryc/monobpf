@@ -10,6 +10,7 @@
 BPF_ARRAY(headers,u64,256);
 //This should be optimized better probably
 BPF_ARRAY(head_size,u64,1);
+BPF_ARRAY(topics,u64,1);
 
 int xdp_prog1(struct CTXTYPE *ctx) {
 
