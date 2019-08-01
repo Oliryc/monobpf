@@ -10,17 +10,18 @@ void perf_reader_free(void *ptr);
 import "C"
 
 import (
+	"flag"
 	"fmt"
-	"github.com/google/gopacket"
-	"github.com/google/gopacket/layers"
-	"github.com/google/gopacket/pcap"
-	bpf "github.com/iovisor/gobpf/bcc"
+	//"github.com/google/gopacket"
+	//"github.com/google/gopacket/layers"
+	//"github.com/google/gopacket/pcap"
+	//bpf "github.com/iovisor/gobpf/bcc"
 	"github.com/performancecopilot/speed"
-	"io/ioutil"
+	//"io/ioutil"
 	"log"
-	"os"
-	"strconv"
-	"strings"
+	//"os"
+	//"strconv"
+	//"strings"
 	"time"
 )
 
@@ -29,13 +30,15 @@ var (
 	snapshotLen int32 = 10240
 	promiscuous       = false
 	timeout           = -1 * time.Second
-	handle      *pcap.Handle
+	//handle      *pcap.Handle
 )
 
 const interval = time.Millisecond
 
+var timelimit = flag.Int("time", 600, "number of seconds to run for")
 func main() {
-	filesrc, err := ioutil.ReadFile("ros_metric.bpf")
+	flag.Parse()
+	/*filesrc, err := ioutil.ReadFile("ros_metric.bpf")
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to load xdp source %v\n", err)
 		os.Exit(1)
@@ -53,30 +56,30 @@ func main() {
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to load xdp prog: %v\n", err)
 		os.Exit(1)
-	}
-	err = module.AttachXDP(device, fn)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Failed to attach xdp prog: %v\n", err)
-		os.Exit(1)
-	}
-	defer func() {
-		if err := module.RemoveXDP(device); err != nil {
-			fmt.Fprintf(os.Stderr, "Failed to remove XDP from %s: %v\n", device, err)
-			os.Exit(1)
-		}
-	}()
-	headers := bpf.NewTable(module.TableId("headers"), module)
-	head_size := bpf.NewTable(module.TableId("head_size"), module)
+	}*/
+	//err = module.AttachXDP(device, fn)
+	//if err != nil {
+	//	fmt.Fprintf(os.Stderr, "Failed to attach xdp prog: %v\n", err)
+	//	os.Exit(1)
+	//}
+	//defer func() {
+	//	if err := module.RemoveXDP(device); err != nil {
+	//		fmt.Fprintf(os.Stderr, "Failed to remove XDP from %s: %v\n", device, err)
+	//		os.Exit(1)
+	//	}
+	//}()
+	//headers := bpf.NewTable(module.TableId("headers"), module)
+	//head_size := bpf.NewTable(module.TableId("head_size"), module)
 	// Open device
-	handle, err = pcap.OpenLive(device, snapshotLen, promiscuous, timeout)
-	if err != nil {
-		log.Fatal(err)
-	}
-	defer handle.Close()
+	//handle, err = pcap.OpenLive(device, snapshotLen, promiscuous, timeout)
+	//if err != nil {
+	//	log.Fatal(err)
+	//}
+	//defer handle.Close()
 
 	metric, err := speed.NewPCPCounter(
 		0,
-		"topic_counter",
+		"counter",
 		"A Simple Metric",
 	)
 	if err != nil {
@@ -97,7 +100,7 @@ func main() {
 	defer client.MustStop()
 
 	fmt.Println("The metric should be visible as rostopic.topic_counter")
-	for i := 0; i < 60; i++ {
+	for i := 0; i < *timelimit; i++ {
 		metric.Up()
 		time.Sleep(time.Second)
 	}
