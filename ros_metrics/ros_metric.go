@@ -102,7 +102,7 @@ func main() {
 
 	metricChatter, err := speed.NewPCPCounter(
 		0,
-		"/chatter",
+		"chatter",
 		"BW of topic",
 	)
 	clientBW, err := speed.NewPCPClient("rostopic_bw")
