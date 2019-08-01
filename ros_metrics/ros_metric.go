@@ -15,6 +15,7 @@ import (
 	"github.com/google/gopacket/layers"
 	"github.com/google/gopacket/pcap"
 	bpf "github.com/iovisor/gobpf/bcc"
+	"github.com/performancecopilot/speed"
 	"io/ioutil"
 	"log"
 	"os"
@@ -31,8 +32,10 @@ var (
 	handle      *pcap.Handle
 )
 
+const interval = time.Millisecond
+
 func main() {
-	filesrc, err := ioutil.ReadFile("packet_trace.bpf")
+	filesrc, err := ioutil.ReadFile("ros_metric.bpf")
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to load xdp source %v\n", err)
 		os.Exit(1)
@@ -70,6 +73,30 @@ func main() {
 		log.Fatal(err)
 	}
 	defer handle.Close()
+
+	metric, err := speed.NewPCPSingletonMetric(
+		0,
+		"ros.topic",
+		speed.Int32Type,
+		speed.CounterSemantics,
+		speed.OneUnit,
+		"A Simple Metric",
+		"This is a simple counter metric to demonstrate the speed API",
+	)
+	if err != nil {
+		log.Fatal("Could not create singelton metric, error: ", err)
+	}
+
+	client, err := speed.NewPCPClient("ros")
+	if err != nil {
+		log.Fatal("Could not create client, error: ", err)
+	}
+
+	client.MustRegister(metric)
+
+	client.MustStart()
+	defer client.MustStop()
+
 	packetSource := gopacket.NewPacketSource(handle, handle.LinkType())
 	for packet := range packetSource.Packets() {
 		header_list := headers.Iter()
