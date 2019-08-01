@@ -120,6 +120,9 @@ func main() {
 	fmt.Println("The metric should be visible as rostopic.topic_counter")
 	for i := 0; i < *timelimit; i++ {
 		metric.Up()
+		metricChatter.Up()
+		metricChatter.Up()
+		metricChatter.Up()
 		time.Sleep(time.Second)
 	}
 	topic_list := topics.Iter()
