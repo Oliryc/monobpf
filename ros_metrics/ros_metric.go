@@ -74,30 +74,34 @@ func main() {
 	}
 	defer handle.Close()
 
-	metric, err := speed.NewPCPSingletonMetric(
+	metric, err := speed.NewPCPCounter(
 		0,
-		"ros.topic",
-		speed.Int32Type,
-		speed.CounterSemantics,
-		speed.OneUnit,
+		"topic_counter",
 		"A Simple Metric",
-		"This is a simple counter metric to demonstrate the speed API",
 	)
 	if err != nil {
-		log.Fatal("Could not create singelton metric, error: ", err)
+		log.Fatal("Could not create counter, error: ", err)
 	}
 
-	client, err := speed.NewPCPClient("ros")
+	client, err := speed.NewPCPClient("rostopic")
 	if err != nil {
 		log.Fatal("Could not create client, error: ", err)
 	}
 
-	client.MustRegister(metric)
+	err = client.Register(metric)
+	if err != nil {
+		log.Fatal("Could not register metric, error: ", err)
+	}
 
 	client.MustStart()
 	defer client.MustStop()
 
-	packetSource := gopacket.NewPacketSource(handle, handle.LinkType())
+	fmt.Println("The metric should be visible as rostopic.topic_counter")
+	for i := 0; i < 60; i++ {
+		metric.Up()
+		time.Sleep(time.Second)
+	}
+	/*packetSource := gopacket.NewPacketSource(handle, handle.LinkType())
 	for packet := range packetSource.Packets() {
 		header_list := headers.Iter()
 		hs_list := head_size.Iter()
@@ -155,5 +159,5 @@ func main() {
 				}
 			}
 		}
-	}
+	} */
 }
