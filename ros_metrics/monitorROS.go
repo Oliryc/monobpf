@@ -1,6 +1,14 @@
 package main
 
 import "C"
+
+/*
+#cgo CFLAGS: -I/usr/include/bcc/compat
+#cgo LDFLAGS: -lbcc
+#include <bcc/bcc_common.h>
+#include <bcc/libbpf.h>
+void perf_reader_free(void *ptr);
+*/
 import (
 	"fmt"
 	bpf "github.com/iovisor/gobpf/bcc"
