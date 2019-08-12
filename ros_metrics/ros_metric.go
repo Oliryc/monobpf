@@ -29,7 +29,6 @@ func main() {
 
 	go MonitorROS(&muTopics, topicList, stopChan)
 	go exportMetrics(&muTopics, topicList, stopChan)
-
 	for i := 0; i < *timelimit; i++ {
 		time.Sleep(time.Second)
 	}
