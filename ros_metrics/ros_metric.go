@@ -17,6 +17,7 @@ import (
 	"github.com/google/gopacket/pcap"
 	bpf "github.com/iovisor/gobpf/bcc"
 	"github.com/performancecopilot/speed"
+	"github.com/seanrivera/monobpf/ros_metrics/exporter/exportMetrics"
 	"io/ioutil"
 	"log"
 	"os"
@@ -31,6 +32,7 @@ var (
 	promiscuous       = false
 	timeout           = -1 * time.Second
 	handle      *pcap.Handle
+	topics      *bpf.Table
 )
 
 const interval = time.Millisecond
@@ -39,6 +41,12 @@ var timelimit = flag.Int("time", 600, "number of seconds to run for")
 
 func main() {
 	flag.Parse()
+	go MonitorROS()
+	go exportMetrics()
+
+}
+
+func MonitorROS() {
 	filesrc, err := ioutil.ReadFile("ros_metric.bpf")
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to load xdp source %v\n", err)
@@ -78,80 +86,6 @@ func main() {
 		log.Fatal(err)
 	}
 	defer handle.Close()
-
-	metric, err := speed.NewPCPCounter(
-		0,
-		"count",
-		"A Simple Metric",
-	)
-	if err != nil {
-		log.Fatal("Could not create counter, error: ", err)
-	}
-
-	client, err := speed.NewPCPClient("rostopic")
-	if err != nil {
-		log.Fatal("Could not create client, error: ", err)
-	}
-	err = client.Register(metric)
-	if err != nil {
-		log.Fatal("Could not register metric, error: ", err)
-	}
-
-	client.MustStart()
-	defer client.MustStop()
-
-	metricChatter, err := speed.NewPCPCounter(
-		0,
-		"/chatter",
-		"BW of topic",
-	)
-	clientBW, err := speed.NewPCPClient("rostopic_bw")
-	if err != nil {
-		log.Fatal("Could not create client, error: ", err)
-	}
-	err = clientBW.Register(metricChatter)
-	if err != nil {
-		log.Fatal("Could not register metric, error: ", err)
-	}
-
-	clientBW.MustStart()
-	defer clientBW.MustStop()
-
-	fmt.Println("The metric should be visible as rostopic.topic_counter")
-	for i := 0; i < *timelimit; i++ {
-		metric.Up()
-		metricChatter.Up()
-		metricChatter.Up()
-		metricChatter.Up()
-		time.Sleep(time.Second)
-	}
-	topic_list := topics.Iter()
-	for topic_list.Next() {
-		key, leaf := topic_list.Key(), topic_list.Leaf()
-		topic_name, err := topics.KeyBytesToStr(key)
-		if err != nil {
-			{
-				fmt.Fprintf(os.Stderr, "Failed to convert to str", err)
-				os.Exit(1)
-			}
-		}
-		metricTemp, err := speed.NewPCPCounter(
-			0,
-			topic_name,
-			"BW of topic",
-		)
-		leaf_val, err := topics.LeafBytesToStr(leaf)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Failed to convert to str", err)
-			os.Exit(1)
-		}
-		leaf_int, err := strconv.ParseUint(leaf_val, 0, 32)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Failed to convert to int", err)
-			os.Exit(1)
-		}
-		metricTemp.Set(int64(leaf_int))
-	}
 	packetSource := gopacket.NewPacketSource(handle, handle.LinkType())
 	for packet := range packetSource.Packets() {
 		header_list := headers.Iter()
@@ -211,4 +145,5 @@ func main() {
 			}
 		}
 	}
+	return topics
 }
