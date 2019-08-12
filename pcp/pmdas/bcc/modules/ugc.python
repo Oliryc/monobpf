@@ -312,6 +312,10 @@ class Probe(object):
         self.minimum = 0
 
     def generate(self):
+
+        # XXX DBG
+        self.begin = "%s_1_" % self.begin
+
         text = """
 int trace_%s(struct pt_regs *ctx) {
 
@@ -358,6 +362,10 @@ int trace_%s(struct pt_regs *ctx) {
             self.log("========================")
             self.log("%%%%%% %s, %s" % (self.end, "trace_%s" % self.end))
             usdt.enable_probe(self.end, "trace_%s" % self.end)
+
+            # XXX DBG
+            self.begin = "%s_2_" % self.begin
+
         except Exception as e:
             self.log("Exn Type: "+str(type(e)))
             self.log("Exn: "+str(e))

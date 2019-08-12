@@ -35,7 +35,8 @@ func main() {
 	var device string
 	filesrc, err := ioutil.ReadFile("session_monitor.bpf")
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Failed to load xdp source %v\n", err)
+		_, err = fmt.Fprintf(os.Stderr, "Failed to load xdp source %v\n", err)
+		os.Exit(1)
 	}
 	source := string(filesrc)
 
@@ -57,19 +58,20 @@ func main() {
 
 	fn, err := module.Load("session_monitor", C.BPF_PROG_TYPE_SOCKET_FILTER, 1, 65536)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Failed to load xdp prog: %v\n", err)
+		_, err = fmt.Fprintf(os.Stderr, "Failed to load xdp prog: %v\n", err)
 		os.Exit(1)
 	}
 
 	err = module.AttachXDP(device, fn)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Failed to attach xdp prog: %v\n", err)
+		_, err = fmt.Fprintf(os.Stderr, "Failed to attach xdp prog: %v\n", err)
 		os.Exit(1)
 	}
 
 	defer func() {
 		if err := module.RemoveXDP(device); err != nil {
-			fmt.Fprintf(os.Stderr, "Failed to remove XDP from %s: %v\n", device, err)
+			_, err = fmt.Fprintf(os.Stderr, "Failed to remove XDP from %s: %v\n", device, err)
+			os.Exit(1)
 		}
 	}()
 
