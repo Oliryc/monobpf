@@ -12,7 +12,7 @@ BPF_ARRAY(headers,u64,256);
 BPF_ARRAY(head_size,u64,1);
 BPF_ARRAY(topics,u64,1);
 
-int xdp_prog1(struct CTXTYPE *ctx) {
+int session_monitor(struct CTXTYPE *ctx) {
 
     void* data_end = (void*)(long)ctx->data_end;
     void* data = (void*)(long)ctx->data;
@@ -39,6 +39,9 @@ int xdp_prog1(struct CTXTYPE *ctx) {
         bpf_trace_printk("=== Abort 3\n");
         return XDP_PASS;
     }
+    bpf_trace_printk("TCP SRC IP: %d", ip_hdr->saddr)
+    bpf_trace_printk(" PORT%d\n",tcp_hdr->source)
+
     hs_value = head_size.lookup(&hs_key);
     if (!hs_value){
         bpf_trace_printk("Error, failed to look up hs_value\n");
