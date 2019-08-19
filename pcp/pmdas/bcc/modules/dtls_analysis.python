@@ -370,63 +370,6 @@ class PCPBCCModule(PCPBCCBase):
         self.lock.release()
         return
 
-
-    def is_websocket_upgrade(self, udpMeta):
-        """ Return non 0 code if the udpMeta* structure is a websocket upgrade. Return 1 for the client request and 2 for the server answer. See https://tools.ietf.org/html/rfc6455.
-            The second return is the updated udpMeta
-        """
-        def put_header_dict_lower():
-            """ Put all in one dictionary, with lower case key as they are case insensitive according to RFC. Account for the fact that key may be duplicated """
-            headers_dict = {}
-            for d in udpMeta.headers:
-                for k,v in d.items(): # Should run once as these dictonary contain only one value
-                    # Headers key are case insensitive
-                    kl = k.lower()
-                    l = headers_dict.get(kl, [])
-                    l.append(v)
-                    headers_dict[kl] = l
-            return headers_dict
-
-        def header_with_value(headers_dict, header_key, required_header_value):
-            """ Return None if header_key is not in headers_dict.
-                Return True if a given header_key is present with a value
-                header_value (splitted on ',', case insensitive), False otherwise """
-            key = header_key.lower()
-            req_val = required_header_value.lower()
-
-            if key not in headers_dict: return None
-            for val in headers_dict[key]:
-                if req_val in map(lambda l: l.lower(), val.split(", ")):
-                    return True
-            return False
-
-        def perform_detection():
-            if type(udpMeta) is UdpOther:
-                return 0
-            # Page 21, https://tools.ietf.org/html/rfc6455#section-4.2.1, verifying only the minimum
-            if type(udpMeta) is DtlsMetaClientHello:
-                if udpMeta.method == "GET":
-                    headers_dict = put_header_dict_lower()
-                    if header_with_value(headers_dict, "upgrade", "websocket") \
-                            and headers_dict.get("sec-websocket-key") \
-                            and headers_dict.get("sec-websocket-version"):
-                        return 1
-                return 0
-            # Page 19, https://tools.ietf.org/html/rfc6455#section-4.1, verifying only the minimum
-            if type(udpMeta) is DtlsMetaClientHelloVerify:
-                if udpMeta.code == 101:
-                    headers_dict = put_header_dict_lower()
-                    if header_with_value(headers_dict, "upgrade", "websocket") \
-                            and header_with_value(headers_dict, "connection", "upgrade") \
-                            and headers_dict.get("sec-websocket-accept"):
-                        return 2
-                return 0
-            self.log("is_websocket_upgrade: incorrect type of argument")
-            return 0
-
-        code = perform_detection()
-        return code, udpMeta._replace(is_websocket_upgrade=code)
-
     # pylint: disable=bad-continuation
     def metrics(self):
         """ Get metric definitions """
