@@ -1,6 +1,5 @@
 package main
 
-import "C"
 
 /*
 #cgo CFLAGS: -I/usr/include/bcc/compat
@@ -9,6 +8,7 @@ import "C"
 #include <bcc/libbpf.h>
 void perf_reader_free(void *ptr);
 */
+import "C"
 import (
 	"fmt"
 	bpf "github.com/iovisor/gobpf/bcc"
@@ -21,7 +21,7 @@ import (
 )
 
 func getTopicsDemo() (error, []string) {
-	app := "rostopic"
+	app := "/opt/ros/melodic/bin/rostopic"
 	arg0 := "list"
 	cmd := exec.Command(app, arg0)
 	stdout, err := cmd.Output()
@@ -73,10 +73,12 @@ func MonitorROS(muTopics *sync.Mutex, topicList []string, stopChan chan struct{}
 		default:
 			err, topics := getTopicsDemo()
 			if err != nil {
+				fmt.Fprintf(os.Stderr, "Failed to get Topics list %s\n", err)
 				os.Exit(1)
 			}
+			fmt.Printf("topics %v\n", topics)
 			muTopics.Lock()
-			topicList = topics
+			copy(topicList,topics)
 			muTopics.Unlock()
 			time.Sleep(time.Second)
 

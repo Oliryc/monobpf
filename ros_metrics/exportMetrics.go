@@ -9,9 +9,12 @@ import (
 )
 
 func exportMetrics(muTopics *sync.Mutex, topicList []string, stopChan chan struct{}) {
-	metric, err := speed.NewPCPCounter(
+	metric, err := speed.NewPCPSingletonMetric(
 		0,
 		"count",
+		speed.Uint64Type,                                                // type
+		speed.CounterSemantics,                                         // semantics
+		speed.OneUnit,                                                  // unit
 		"A Simple Metric",
 	)
 	if err != nil {
@@ -47,9 +50,14 @@ func exportMetrics(muTopics *sync.Mutex, topicList []string, stopChan chan struc
 		select {
 		default:
 			muTopics.Lock()
-			localList := topicList
+			localList := make([]string, len(topicList))
+			copy(localList, topicList)
 			muTopics.Unlock()
-			err = metric.Set(int64(len(localList)))
+			localList = deleteEmpty(localList)
+			listlen := len(localList)
+			fmt.Printf("Current list %v\n", localList)
+			fmt.Printf("Current metric val? %d\n", listlen)
+			err = metric.Set(uint64(listlen))
 			if err != nil {
 				log.Fatal("Could not set metric, error: ", err)
 			}
@@ -59,4 +67,13 @@ func exportMetrics(muTopics *sync.Mutex, topicList []string, stopChan chan struc
 		}
 	}
 
+}
+func deleteEmpty (s []string) []string {
+    var r []string
+    for _, str := range s {
+        if str != "" {
+            r = append(r, str)
+        }
+    }
+    return r
 }

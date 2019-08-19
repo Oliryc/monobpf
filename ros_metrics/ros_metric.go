@@ -23,7 +23,9 @@ func main() {
 	flag.Parse()
 	var (
 		muTopics  sync.Mutex
-		topicList []string
+		//TODO: MAGIC NUMBER BAD
+		//topicList []string
+		topicList = make([]string, 256)
 		stopChan  = make(chan struct{})
 	)
 
