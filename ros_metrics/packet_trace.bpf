@@ -1,0 +1,63 @@
+#define KBUILD_MODNAME "foo"
+#include <uapi/linux/bpf.h>
+#include <linux/in.h>
+#include <linux/if_ether.h>
+#include <linux/if_packet.h>
+#include <linux/if_vlan.h>
+#include <linux/ip.h>
+#include <linux/ipv6.h>
+
+BPF_ARRAY(headers,u64,256);
+//This should be optimized better probably
+BPF_ARRAY(head_size,u64,1);
+
+int xdp_prog1(struct CTXTYPE *ctx) {
+
+    void* data_end = (void*)(long)ctx->data_end;
+    void* data = (void*)(long)ctx->data;
+
+    struct ethhdr *eth_hdr;
+    struct iphdr* ip_hdr;
+    struct tcphdr* tcp_hdr;
+    uint32_t hs_key =0;
+    uint32_t head_key =0;
+    long *hs_value;
+    long *head_value;
+
+    eth_hdr = (struct ethhdr *)data;
+
+    // drop packets
+    int rc = RETURNCODE; // let pass XDP_PASS or redirect to tx via XDP_TX
+    ip_hdr = (struct iphdr *)(eth_hdr + 1);
+    if (ip_hdr + 1 > (struct iphdr *)data_end) {
+        bpf_trace_printk("=== Abort 2\n");
+        return XDP_PASS;
+    }
+    tcp_hdr = (struct tcphdr*)((u8 *)ip_hdr + ip_hdr->ihl * 4);
+    if (tcp_hdr + 1 > (struct tcphdr *)data_end) {
+        bpf_trace_printk("=== Abort 3\n");
+        return XDP_PASS;
+    }
+    hs_value = head_size.lookup(&hs_key);
+    if (!hs_value){
+        bpf_trace_printk("Error, failed to look up hs_value\n");
+        return XDP_PASS;
+    }
+    head_key = *hs_value;
+    head_value = headers.lookup(&head_key);
+    if (!head_value){
+        bpf_trace_printk("Error, failed to look up head_value\n");
+        return XDP_PASS;
+    }
+    if (ip_hdr->tot_len > 80){
+        bpf_trace_printk("Adding a packet to the list: %u\n", tcp_hdr->seq);
+        *head_value = tcp_hdr->seq;
+        *hs_value+=1;
+    }
+    if (*hs_value > 255){
+        bpf_trace_printk("Error Head Size exceeded array size. Data was lost!\n");
+        *hs_value = 0;
+    }
+
+    return rc;
+}
