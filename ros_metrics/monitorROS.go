@@ -68,6 +68,8 @@ func MonitorROS(muTopics *sync.Mutex, topicList []string, stopChan chan struct{}
 			os.Exit(1)
 		}
 	}()
+	fmt.Println("May be dropping packets, hit CTRL+C to stop. See output of `sudo cat /sys/kernel/debug/tracing/trace_pipe`")
+
 	for {
 		select {
 		default:
