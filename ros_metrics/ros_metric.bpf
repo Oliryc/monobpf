@@ -39,8 +39,8 @@ int session_monitor(struct CTXTYPE *ctx) {
         bpf_trace_printk("=== Abort 3\n");
         return XDP_PASS;
     }
-    bpf_trace_printk("TCP SRC IP: %d", ip_hdr->saddr)
-    bpf_trace_printk(" PORT%d\n",tcp_hdr->source)
+    bpf_trace_printk("TCP SRC IP: %d", ip_hdr->saddr);
+    bpf_trace_printk(" PORT%d\n",tcp_hdr->source);
 
     hs_value = head_size.lookup(&hs_key);
     if (!hs_value){
