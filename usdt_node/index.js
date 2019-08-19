@@ -8,6 +8,8 @@ const provider = new USDT.USDTProvider("nodeProvider");
 const probe1 = provider.addProbe("firstProbe", "int", "char *");
 
 const probeOneBefore = provider.addProbe("OneBefore", "int");
+console.log('probeOneBefore');
+console.log(probeOneBefore);
 const probeOneAfter = provider.addProbe("OneAfter", "int");
 
 const probeTwoBefore = provider.addProbe("TwoBefore", "int");
@@ -44,6 +46,9 @@ function functionOneProbed(a, b) {
 }
 
 function one(a, b) {
+  console.time('nothing');
+  console.timeEnd('nothing');
+
   console.time('before_one');
   probeOneBefore.fire(function() { return [a, b]});
   console.timeEnd('before_one');
