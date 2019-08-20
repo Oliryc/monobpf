@@ -1,11 +1,17 @@
 {
   "name": "test-antlr",
   "version": "1.0.0",
-  "description": "Test",
+  "description": "Test with ANTLR to annotate USDT code",
   "main": "index.js",
   "scripts": {
+    "start": "node index.js",
+    "compile": "npm run antlr4-js",
+    "antlr4-js": "java -Xmx500M org.antlr.v4.Tool -Dlanguage=JavaScript -lib grammars -o lib -visitor -Xexact-output-dir grammars/ECMAScript.g4",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "author": "SnT",
-  "license": "ISC"
+  "license": "ISC",
+  "dependencies": {
+    "antlr4": "^4.7.2"
+  }
 }
