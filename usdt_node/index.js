@@ -65,9 +65,11 @@ function one(a, b) {
 
 let countdown = 10;
 function waiter() {
-  one(Date.now(), Math.random()*1000);
-  two(Math.random()*10000, Math.random()*1000);
+  // one(Date.now(), Math.random()*1000);
+  // two(Math.random()*10000, Math.random()*1000);
   // console.log("Trying to fire probe...");
+
+  /*
   if(countdown <= 0) {
     console.log("Disable provider");
     provider.disable();
@@ -80,6 +82,7 @@ function waiter() {
     // Returning values will be passed as arguments to the probe
     return [countdown, "My little string"];
   });
+  */
 }
 
 setInterval(waiter, 1000);
