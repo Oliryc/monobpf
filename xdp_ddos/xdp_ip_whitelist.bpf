@@ -7,24 +7,37 @@
 #include <linux/ip.h>
 #include <linux/ipv6.h>
 
+// IP not recognised
+#define NOIP 0
+#define NOIP6 ((struct in6_addr) 0); // TODO Find something better
+
+#define WHITE4SIZE 0
+#define WHITE6SIZE 10
+
+static int ip4white[] = {}; // Update WHITE4SIZE
+static struct in6_addr ip6white[] = {}; // Update WHITE6SIZE
 
 BPF_TABLE("percpu_array", uint32_t, long, dropcnt, 256);
 
-static inline int parse_ipv4(void *data, u64 nh_off, void *data_end) {
+/* Returns IPv4 address, in network byte order */
+static inline int get_ipv4(void *data, u64 nh_off, void *data_end) {
     struct iphdr *iph = data + nh_off;
 
     if ((void*)&iph[1] > data_end)
-        return 0;
-    return iph->protocol;
+        return NOIP;
+    return iph->saddr;
 }
 
-static inline int parse_ipv6(void *data, u64 nh_off, void *data_end) {
+/* Returns IPv6 address, in network byte order */
+/*
+static inline struct in6_addr get_ipv6(void *data, u64 nh_off, void *data_end) {
     struct ipv6hdr *ip6h = data + nh_off;
 
     if ((void*)&ip6h[1] > data_end)
-        return 0;
-    return ip6h->nexthdr;
+        return NOIP6;
+    return ip6h->saddr;
 }
+*/
 
 int xdp_prog1(struct CTXTYPE *ctx) {
 
@@ -63,17 +76,35 @@ int xdp_prog1(struct CTXTYPE *ctx) {
         }
     }
 
-    if (h_proto == htons(ETH_P_IP))
-        index = parse_ipv4(data, nh_off, data_end);
+    // Allow packet to pass if ip in whitelist
+    if (h_proto == htons(ETH_P_IP)) {
+        int ip = get_ipv4(data, nh_off, data_end);
+        if (ip == NOIP) {
+          return XDP_DROP;
+        }
+        #pragma unroll
+        for (int i = 0; i < WHITE4SIZE; i++) {
+          if (ip4white[i] == ip)
+            return XDP_PASS;
+          return XDP_DROP;
+        }
+    }
+        /*
     else if (h_proto == htons(ETH_P_IPV6))
-       index = parse_ipv6(data, nh_off, data_end);
+        struct in6_addr ip6 = get_ipv6(data, nh_off, data_end);
+        if (ip == NOIP6) {
+          return XDP_DROP;
+        }
+        #pragma unroll
+        for (int i = 0; i < WHITE6SIZE; i++) {
+          if (ip6white[i] == ip)
+            return XDP_PASS;
+          return XDP_DROP;
+        }
+        */
     else
-        index = 0;
+        return XDP_DROP;
 
-    value = dropcnt.lookup(&index);
-    if (value)
-        *value += 1;
-
-    return rc;
+    return XDP_DROP;
 }
 
