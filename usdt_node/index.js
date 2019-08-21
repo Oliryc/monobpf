@@ -8,6 +8,8 @@ const provider = new USDT.USDTProvider("nodeProvider");
 const probe1 = provider.addProbe("firstProbe", "int", "char *");
 
 const probeOneBefore = provider.addProbe("OneBefore", "int");
+console.log('probeOneBefore');
+console.log(probeOneBefore);
 const probeOneAfter = provider.addProbe("OneAfter", "int");
 
 const probeTwoBefore = provider.addProbe("TwoBefore", "int");
@@ -44,6 +46,9 @@ function functionOneProbed(a, b) {
 }
 
 function one(a, b) {
+  console.time('nothing');
+  console.timeEnd('nothing');
+
   console.time('before_one');
   probeOneBefore.fire(function() { return [a, b]});
   console.timeEnd('before_one');
@@ -61,8 +66,10 @@ function one(a, b) {
 let countdown = 10;
 function waiter() {
   one(Date.now(), Math.random()*1000);
-  two(Math.random()*10000, Math.random()*1000);
+  // two(Math.random()*10000, Math.random()*1000);
   // console.log("Trying to fire probe...");
+
+  /*
   if(countdown <= 0) {
     console.log("Disable provider");
     provider.disable();
@@ -75,6 +82,7 @@ function waiter() {
     // Returning values will be passed as arguments to the probe
     return [countdown, "My little string"];
   });
+  */
 }
 
 setInterval(waiter, 1000);
