@@ -1,6 +1,5 @@
 package main
 
-
 /*
 #cgo CFLAGS: -I/usr/include/bcc/compat
 #cgo LDFLAGS: -lbcc
@@ -68,22 +67,37 @@ func MonitorROS(muTopics *sync.Mutex, topicList []string, stopChan chan struct{}
 			os.Exit(1)
 		}
 	}()
-	fmt.Println("May be dropping packets, hit CTRL+C to stop. See output of `sudo cat /sys/kernel/debug/tracing/trace_pipe`")
-
+	fmt.Println("May be dropping packets, hit CTRL+C to stop. " +
+		"See output of `sudo cat /sys/kernel/debug/tracing/trace_pipe`")
+	session := bpf.NewTable(module.TableId("session"), module)
 	for {
 		select {
 		default:
 			err, topics := getTopicsDemo()
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "Failed to get Topics list %s\n", err)
+				_, _ = fmt.Fprintf(os.Stderr, "Failed to get Topics list %s\n", err)
 				os.Exit(1)
 			}
 			fmt.Printf("topics %v\n", topics)
 			muTopics.Lock()
-			copy(topicList,topics)
+			copy(topicList, topics)
 			muTopics.Unlock()
 			time.Sleep(time.Second)
-
+			for it := session.Iter(); it.Next(); {
+				key, leaf := it.Key(), it.Leaf()
+				key_str, err := session.KeyBytesToStr(key)
+				if err != nil {
+					_, _ = fmt.Fprintf(os.Stderr, "Failed to convert to str", err)
+					os.Exit(1)
+				}
+				leaf_str, err := session.LeafBytesToStr(leaf)
+				if err != nil {
+					_, _ = fmt.Fprintf(os.Stderr, "Failed to convert to str", err)
+					os.Exit(1)
+				}
+				fmt.Printf("%s", key_str)
+				fmt.Printf("%s", leaf_str)
+			}
 		case <-stopChan:
 			return
 		}
