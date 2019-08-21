@@ -43,7 +43,7 @@ int session_monitor(struct CTXTYPE *ctx) {
     uint32_t tot_len = 0;
     long *hs_value;
     long *head_value;
-    auth_leaf.allow = 0
+    auth_leaf.allow = 0;
     eth_hdr = (struct ethhdr *)data;
 
     // drop packets
@@ -58,9 +58,9 @@ int session_monitor(struct CTXTYPE *ctx) {
         bpf_trace_printk("=== Abort 3\n");
         return XDP_PASS;
     }
-    bpf_trace_printk("TCP SRC IP: %pI4", ip_hdr->saddr);
+    bpf_trace_printk("TCP SRC IP: %d", ip_hdr->saddr);
     bpf_trace_printk(" PORT%d\n", bpf_ntohs(tcp_hdr->source));
-    bpf_trace_printk("TCP DEST IP: %pI4", ip_hdr->daddr);
+    bpf_trace_printk("TCP DEST IP: %d", ip_hdr->daddr);
     bpf_trace_printk(" PORT%d\n", bpf_ntohs(tcp_hdr->dest));
     //TODO: METADATA
     auth_key.src_ip = ip_hdr->saddr;
@@ -70,8 +70,8 @@ int session_monitor(struct CTXTYPE *ctx) {
 
 
     //TODO: take ROS_MASTER FROM AN ARG
-    if auth_key.src_port == ROS_MASTER_PORT || auth_key.dst_port == ROS_MASTER_PORT{
-       auth_leaf.allow =1;
+    if (auth_key.src_port == ROS_MASTER_PORT || auth_key.dst_port == ROS_MASTER_PORT){
+       auth_leaf.allow = 1;
     }
 
     sessions.insert(&auth_key, &auth_leaf);

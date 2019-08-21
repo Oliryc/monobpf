@@ -69,7 +69,7 @@ func MonitorROS(muTopics *sync.Mutex, topicList []string, stopChan chan struct{}
 	}()
 	fmt.Println("May be dropping packets, hit CTRL+C to stop. " +
 		"See output of `sudo cat /sys/kernel/debug/tracing/trace_pipe`")
-	session := bpf.NewTable(module.TableId("session"), module)
+	session := bpf.NewTable(module.TableId("sessions"), module)
 	for {
 		select {
 		default:
@@ -83,7 +83,8 @@ func MonitorROS(muTopics *sync.Mutex, topicList []string, stopChan chan struct{}
 			copy(topicList, topics)
 			muTopics.Unlock()
 			time.Sleep(time.Second)
-			for it := session.Iter(); it.Next(); {
+			it := session.Iter()
+			for it.Next() {
 				key, leaf := it.Key(), it.Leaf()
 				key_str, err := session.KeyBytesToStr(key)
 				if err != nil {
