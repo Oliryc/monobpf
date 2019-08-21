@@ -9,6 +9,8 @@ void perf_reader_free(void *ptr);
 */
 import "C"
 import (
+	"bytes"
+	"encoding/binary"
 	"fmt"
 	bpf "github.com/iovisor/gobpf/bcc"
 	"io/ioutil"
@@ -17,7 +19,15 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unsafe"
 )
+
+type Key struct {
+	src_ip   uint32 //source ip
+	dst_ip   uint32 //destination ip
+	src_port uint16 //source port
+	unsigned uint16 //destination port
+}
 
 func getTopicsDemo() (error, []string) {
 	app := "/opt/ros/melodic/bin/rostopic"
@@ -86,6 +96,12 @@ func MonitorROS(muTopics *sync.Mutex, topicList []string, stopChan chan struct{}
 			it := session.Iter()
 			for it.Next() {
 				key, leaf := it.Key(), it.Leaf()
+				var keyVal Key
+				err := binary.Read(bytes.NewBuffer(key), binary.LittleEndian, &keyVal)
+				if err != nil {
+					_, _ = fmt.Fprint(os.Stderr, "Failed to extract bytes")
+					os.Exit(1)
+				}
 				key_str, err := session.KeyBytesToStr(key)
 				if err != nil {
 					_, _ = fmt.Fprintf(os.Stderr, "Failed to convert to str", err)
@@ -96,8 +112,8 @@ func MonitorROS(muTopics *sync.Mutex, topicList []string, stopChan chan struct{}
 					_, _ = fmt.Fprintf(os.Stderr, "Failed to convert to str", err)
 					os.Exit(1)
 				}
-				fmt.Printf("%s", key_str)
-				fmt.Printf("%s", leaf_str)
+				fmt.Printf("%s -> %v", key_str, keyVal)
+				fmt.Printf("%s\n", leaf_str)
 			}
 		case <-stopChan:
 			return
