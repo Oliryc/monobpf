@@ -62,10 +62,12 @@ int session_monitor(struct CTXTYPE *ctx) {
     bpf_trace_printk(" PORT%d\n", bpf_ntohs(tcp_hdr->source));
     bpf_trace_printk("TCP DEST IP: %pI4", ip_hdr->daddr);
     bpf_trace_printk(" PORT%d\n", bpf_ntohs(tcp_hdr->dest));
+    //TODO: METADATA
     auth_key.src_ip = ip_hdr->saddr;
     auth_key.src_port = bpf_ntohs(tcp_hdr->source);
     auth_key.dst_ip = ip_hdr->daddr;
     auth_key.dst_port = bpf_ntohs(tcp_hdr->dest);
+
 
     //TODO: take ROS_MASTER FROM AN ARG
     if auth_key.src_port == ROS_MASTER_PORT || auth_key.dst_port == ROS_MASTER_PORT{
