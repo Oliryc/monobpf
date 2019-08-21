@@ -11,10 +11,12 @@
 #define NOIP 0
 #define NOIP6 ((struct in6_addr) 0); // TODO Find something better
 
-#define WHITE4SIZE 0
-#define WHITE6SIZE 10
+#define WHITE4SIZE 1
+#define WHITE6SIZE 0
 
-static int ip4white[] = {}; // Update WHITE4SIZE
+// In Python, socket.htonl(int(ipaddress.ip_address('10.244.3.24'))) == 402912266
+// which is the representation we get in this programm
+static int ip4white[] = {402912266}; // Update WHITE4SIZE
 static struct in6_addr ip6white[] = {}; // Update WHITE6SIZE
 
 BPF_TABLE("percpu_array", uint32_t, long, dropcnt, 256);
@@ -44,7 +46,7 @@ int xdp_prog1(struct CTXTYPE *ctx) {
     void* data_end = (void*)(long)ctx->data_end;
     void* data = (void*)(long)ctx->data;
 
-    bpf_trace_printk("examples/networking/xdp/xdp_drop_count: %u\\n", data_end-data);
+    bpf_trace_printk("examples/networking/xdp/xdp_drop_count: %u\n", data_end-data);
 
     struct ethhdr *eth = data;
 
@@ -79,15 +81,24 @@ int xdp_prog1(struct CTXTYPE *ctx) {
     // Allow packet to pass if ip in whitelist
     if (h_proto == htons(ETH_P_IP)) {
         int ip = get_ipv4(data, nh_off, data_end);
+        bpf_trace_printk("ip %u\n", ip);
+        bpf_trace_printk("ip %u\n", ntohs(ip));
+        bpf_trace_printk("ip %u\n", bpf_ntohl(ip));
         if (ip == NOIP) {
+          bpf_trace_printk("NOIP\n");
           return XDP_DROP;
         }
         #pragma unroll
         for (int i = 0; i < WHITE4SIZE; i++) {
-          if (ip4white[i] == ip)
+          bpf_trace_printk("LOOP\n");
+          if (ip4white[i] == ip) {
+            bpf_trace_printk("PASS\n");
             return XDP_PASS;
-          return XDP_DROP;
+          }
         }
+        bpf_trace_printk("DROP\n");
+        return XDP_DROP;
+        // return XDP_PASS;
     }
         /*
     else if (h_proto == htons(ETH_P_IPV6))
