@@ -1,0 +1,50 @@
+#define KBUILD_MODNAME "foo"
+#include <uapi/linux/bpf.h>
+#include <linux/in.h>
+#include <linux/if_ether.h>
+#include <linux/if_packet.h>
+#include <linux/if_vlan.h>
+#include <linux/ip.h>
+#include <linux/ipv6.h>
+
+int secure_ros(struct CTXTYPE *ctx) {
+
+    void* data_end = (void*)(long)ctx->data_end;
+    void* data = (void*)(long)ctx->data;
+    struct Key auth_key;
+    struct Leaf auth_leaf;
+    struct ethhdr *eth_hdr;
+    struct iphdr* ip_hdr;
+    struct tcphdr* tcp_hdr;
+    uint32_t hs_key =0;
+    uint32_t head_key =0;
+    uint32_t tot_len = 0;
+    long *hs_value;
+    long *head_value;
+    auth_leaf.allow = 0;
+    eth_hdr = (struct ethhdr *)data;
+
+    // drop packets
+    int rc = RETURNCODE; // let pass XDP_PASS or redirect to tx via XDP_TX
+    ip_hdr = (struct iphdr *)(eth_hdr + 1);
+    if (ip_hdr + 1 > (struct iphdr *)data_end) {
+        bpf_trace_printk("=== Abort 2\n");
+        return XDP_PASS;
+    }
+    tcp_hdr = (struct tcphdr*)((u8 *)ip_hdr + ip_hdr->ihl * 4);
+    if (tcp_hdr + 1 > (struct tcphdr *)data_end) {
+        bpf_trace_printk("=== Abort 3\n");
+        return XDP_PASS;
+    }
+   /* bpf_trace_printk("TCP SRC IP: %d", ip_hdr->saddr);
+    bpf_trace_printk(" PORT%d\n", bpf_ntohs(tcp_hdr->source));
+    bpf_trace_printk("TCP DEST IP: %d", ip_hdr->daddr);
+    bpf_trace_printk(" PORT%d\n", bpf_ntohs(tcp_hdr->dest));*/
+    //TODO: METADATA
+    auth_key.src_ip = ip_hdr->saddr;
+    auth_key.src_port = bpf_ntohs(tcp_hdr->source);
+    auth_key.dst_ip = ip_hdr->daddr;
+    auth_key.dst_port = bpf_ntohs(tcp_hdr->dest);
+
+
+    return rc;
