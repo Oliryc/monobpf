@@ -19,14 +19,13 @@ import (
 	"strings"
 	"sync"
 	"time"
-	"unsafe"
 )
 
 type Key struct {
-	src_ip   uint32 //source ip
-	dst_ip   uint32 //destination ip
-	src_port uint16 //source port
-	unsigned uint16 //destination port
+	Src_ip   uint32 //source ip
+	Dst_ip   uint32 //destination ip
+	Src_port uint16 //source port
+	Dst_port uint16 //destination port
 }
 
 func getTopicsDemo() (error, []string) {
