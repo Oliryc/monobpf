@@ -80,17 +80,6 @@ int session_monitor(struct CTXTYPE *ctx) {
     }
 
     sessions.insert(&auth_key, &auth_leaf);
-    hs_value = head_size.lookup(&hs_key);
-    if (!hs_value){
-        bpf_trace_printk("Error, failed to look up hs_value\n");
-        return XDP_PASS;
-    }
-    head_key = *hs_value;
-    head_value = headers.lookup(&head_key);
-    if (!head_value){
-        bpf_trace_printk("Error, failed to look up head_value\n");
-        return XDP_PASS;
-    }
     tot_len = bpf_ntohs(ip_hdr->tot_len);
     bpf_trace_printk("ip_hdr->tot_len1: %u\n", tot_len);
       u16 tcphdr_length = tcp_hdr->doff;
@@ -109,7 +98,18 @@ int session_monitor(struct CTXTYPE *ctx) {
     bpf_trace_printk("data_end-data : %u\n", (data_end-data));
     bpf_trace_printk("header_size(byte) : %u\n", sizeof(struct tcphdr)+sizeof(struct iphdr)+sizeof(struct ethhdr));
     bpf_trace_printk("==============================\n");
-
+    
+    hs_value = head_size.lookup(&hs_key);
+    if (!hs_value){
+        bpf_trace_printk("Error, failed to look up hs_value\n");
+        return XDP_PASS;
+    }
+    head_key = *hs_value;
+    head_value = headers.lookup(&head_key);
+    if (!head_value){
+        bpf_trace_printk("Error, failed to look up head_value\n");
+        return XDP_PASS;
+    }
 
     if (ip_hdr->tot_len > 80){
         bpf_trace_printk("Adding a packet to the list: %u\n", tcp_hdr->seq);
