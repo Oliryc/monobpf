@@ -15,8 +15,14 @@ import time
 import sys
 import socket, struct
 
-# Like blockedIp = ['10.244.3.24']
-blockedIp = [
+# Like unblockedIp = ['10.244.3.24']
+unblockedIp = [
+    "192.168.1.187", # Cyril’s computer
+    #  "192.168.1.98", # Lucian’s connector
+    "192.168.1.1", # Router
+    "192.168.1.150", # Router
+    "192.168.1.131", # ??
+    "192.168.1.68", # ??
 ]
 debug = 0
 flags = 0
@@ -59,7 +65,7 @@ with open("xdp_ip_whitelist.bpf") as bpf_file:
     bpf_src = bpf_file.read()
     ip4array = map(str,
         [socket.htonl(struct.unpack("!L", socket.inet_aton(ip))[0])
-         for ip in blockedIp])
+         for ip in unblockedIp])
     bpf_src = bpf_src.replace("__IP4ARRAY__", ", ".join(ip4array))
     bpf_src = bpf_src.replace("__IP4ARRAYSIZE__", str(len(ip4array)))
     if debug:
@@ -84,7 +90,7 @@ else:
 
 dropcnt = b.get_table("dropcnt")
 prev = [0] * 256
-print("Accepting packets only from the following IP addresses {}, hit CTRL+C to stop".format(blockedIp))
+print("Accepting packets only from the following IP addresses {}, hit CTRL+C to stop".format(unblockedIp))
 while 1:
     try:
         time.sleep(1)
