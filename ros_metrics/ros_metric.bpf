@@ -1,11 +1,18 @@
 #define KBUILD_MODNAME "foo"
 #include <uapi/linux/bpf.h>
+#include <net/sock.h>
+#include <bcc/proto.h>
 #include <linux/in.h>
 #include <linux/if_ether.h>
 #include <linux/if_packet.h>
 #include <linux/if_vlan.h>
 #include <linux/ip.h>
 #include <linux/ipv6.h>
+
+
+#define IP_TCP 6
+#define ETH_HLEN 14
+#define ROS_MASTER_PORT 11311
 
 BPF_ARRAY(headers,u64,256);
 //This should be optimized better probably
@@ -23,7 +30,6 @@ struct Leaf {
 	int allow;            //timestamp in ns
 };
 
-#define ROS_MASTER_PORT 11311
 //BPF_TABLE(map_type, key_type, leaf_type, table_name, num_entry)
 //map <Key, Leaf>
 //tracing sessions having same Key(dst_ip, src_ip, dst_port,src_port)

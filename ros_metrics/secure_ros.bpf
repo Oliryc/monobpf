@@ -11,8 +11,8 @@ int secure_ros(struct CTXTYPE *ctx) {
 
     void* data_end = (void*)(long)ctx->data_end;
     void* data = (void*)(long)ctx->data;
-    struct Key auth_key;
-    struct Leaf auth_leaf;
+    //struct Key auth_key;
+    //struct Leaf auth_leaf;
     struct ethhdr *eth_hdr;
     struct iphdr* ip_hdr;
     struct tcphdr* tcp_hdr;
@@ -21,7 +21,7 @@ int secure_ros(struct CTXTYPE *ctx) {
     uint32_t tot_len = 0;
     long *hs_value;
     long *head_value;
-    auth_leaf.allow = 0;
+    //auth_leaf.allow = 0;
     eth_hdr = (struct ethhdr *)data;
 
     // drop packets
@@ -41,10 +41,11 @@ int secure_ros(struct CTXTYPE *ctx) {
     bpf_trace_printk("TCP DEST IP: %d", ip_hdr->daddr);
     bpf_trace_printk(" PORT%d\n", bpf_ntohs(tcp_hdr->dest));*/
     //TODO: METADATA
-    auth_key.src_ip = ip_hdr->saddr;
+    /*auth_key.src_ip = ip_hdr->saddr;
     auth_key.src_port = bpf_ntohs(tcp_hdr->source);
     auth_key.dst_ip = ip_hdr->daddr;
     auth_key.dst_port = bpf_ntohs(tcp_hdr->dest);
-
+    */
 
     return rc;
+}
