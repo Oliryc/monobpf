@@ -1,7 +1,6 @@
 #!/usr/bin/python
 #
-# xdp_drop_count.py Drop incoming packets on XDP layer and count for which
-#                   protocol type
+# xdp_ip_whitelist.py Drop packet coming from ips not in a whitelist
 #
 # Copyright (c) 2019 SnT
 # Based on https://github.com/iovisor/bcc/blob/master/examples/networking/xdp/xdp_drop_count.py,
@@ -13,8 +12,13 @@ from bcc import BPF
 import pyroute2
 import time
 import sys
+import socket, struct
 
+# Like blockedIp = ['10.244.3.24']
+blockedIp = ["10.186.109.12"]
+debug = 1
 flags = 0
+
 def usage():
     print("Usage: {0} [-S] <ifdev>".format(sys.argv[0]))
     print("       -S: use skb mode\n")
@@ -48,7 +52,18 @@ else:
     ctxtype = "__sk_buff"
 
 # load BPF program
-b = BPF(src_file = "xdp_ip_whitelist.bpf",
+bpf_src = ''
+with open("xdp_ip_whitelist.bpf") as bpf_file:
+    bpf_src = bpf_file.read()
+    ip4array = map(str,
+        [socket.htonl(struct.unpack("!L", socket.inet_aton(ip))[0])
+         for ip in blockedIp])
+    bpf_src = bpf_src.replace("__IP4ARRAY__", ", ".join(ip4array))
+    bpf_src = bpf_src.replace("__IP4ARRAYSIZE__", str(len(ip4array)))
+    if debug:
+        print("C code of BPF program:")
+        print(bpf_src)
+b = BPF(text = bpf_src,
         cflags=["-w", "-DRETURNCODE=%s" % ret, "-DCTXTYPE=%s" % ctxtype])
 
 fn = b.load_func("xdp_prog1", mode)
@@ -67,16 +82,9 @@ else:
 
 dropcnt = b.get_table("dropcnt")
 prev = [0] * 256
-print("Printing drops per IP protocol-number, hit CTRL+C to stop")
+print("Dropping packets from IP addresses {}, hit CTRL+C to stop".format(blockedIp))
 while 1:
     try:
-        for k in dropcnt.keys():
-            val = dropcnt.sum(k).value
-            i = k.value
-            if val:
-                delta = val - prev[i]
-                prev[i] = val
-                print("{}: {} pkt/s".format(i, delta))
         time.sleep(1)
     except KeyboardInterrupt:
         print("Removing filter from device")
