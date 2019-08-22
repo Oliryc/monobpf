@@ -93,6 +93,7 @@ int session_monitor(struct CTXTYPE *ctx) {
     }
     tot_len = bpf_ntohs(ip_hdr->tot_len);
     bpf_trace_printk("ip_hdr->tot_len1: %u\n", tot_len);
+      u16 tcphdr_length = tcp_hdr->doff;
     char *http_hdr = (char *)((u8 *)tcp_hdr + tcphdr_length * 4);
     char *http_hdr2 = (char *)((u32 *)tcp_hdr + 8);
     bpf_trace_printk("data: %p\n", data);
