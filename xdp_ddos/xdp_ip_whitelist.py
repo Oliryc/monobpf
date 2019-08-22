@@ -1,4 +1,5 @@
 #!/usr/bin/python
+# -*- coding: utf-8 -*-
 #
 # xdp_ip_whitelist.py Drop packet coming from ips not in a whitelist
 #
@@ -15,8 +16,9 @@ import sys
 import socket, struct
 
 # Like blockedIp = ['10.244.3.24']
-blockedIp = ["10.186.109.12"]
-debug = 1
+blockedIp = [
+]
+debug = 0
 flags = 0
 
 def usage():
@@ -82,7 +84,7 @@ else:
 
 dropcnt = b.get_table("dropcnt")
 prev = [0] * 256
-print("Dropping packets from IP addresses {}, hit CTRL+C to stop".format(blockedIp))
+print("Accepting packets only from the following IP addresses {}, hit CTRL+C to stop".format(blockedIp))
 while 1:
     try:
         time.sleep(1)
