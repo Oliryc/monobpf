@@ -12,12 +12,12 @@
 #define NOIP6 ((struct in6_addr) 0); // TODO Find something better
 
 #define WHITE4SIZE 1
-#define WHITE6SIZE 0
+// #define WHITE6SIZE 0
 
 // In Python, socket.htonl(int(ipaddress.ip_address('10.244.3.24'))) == 402912266
 // which is the representation we get in this programm
 static int ip4white[] = {402912266}; // Update WHITE4SIZE
-static struct in6_addr ip6white[] = {}; // Update WHITE6SIZE
+// static struct in6_addr ip6white[] = {}; // Update WHITE6SIZE
 
 BPF_TABLE("percpu_array", uint32_t, long, dropcnt, 256);
 
