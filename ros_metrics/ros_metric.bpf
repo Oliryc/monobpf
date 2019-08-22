@@ -46,9 +46,9 @@ int session_monitor(struct __sk_buff *skb) {
 
 	struct ip_t *ip = cursor_advance(cursor, sizeof(*ip));
 	//filter TCP packets (ip next protocol = 0x06)
-	if (ip->nextp != IP_TCP) {
-		goto DROP;
-	}
+	//if (ip->nextp != IP_TCP) {
+	//	goto DROP;
+	//}
 
 	u32  tcp_header_length = 0;
 	u32  ip_header_length = 0;
@@ -56,16 +56,16 @@ int session_monitor(struct __sk_buff *skb) {
 	u32  payload_length = 0;
 	struct Key 	auth_key;
 	struct Leaf auth_leaf = {0};
-
+        
         //calculate ip header length
         //value to multiply * 4
         //e.g. ip->hlen = 5 ; IP Header Length = 5 x 4 byte = 20 byte
-        ip_header_length = ip->hlen << 2;    //SHL 2 -> *4 multiply
+        //ip_header_length = ip->hlen << 2;    //SHL 2 -> *4 multiply
 
         //check ip header length against minimum
-        if (ip_header_length < sizeof(*ip)) {
-                goto DROP;
-        }
+        //if (ip_header_length < sizeof(*ip)) {
+         //       goto DROP;
+        //}
 
         //shift cursor forward for dynamic ip header size
         void *_ = cursor_advance(cursor, (ip_header_length-sizeof(*ip)));
@@ -74,16 +74,18 @@ int session_monitor(struct __sk_buff *skb) {
 
 	//retrieve ip src/dest and port src/dest of current packet
 	//and save it into struct Key
-	key.dst_ip = ip->dst;
-	key.src_ip = ip->src;
-	key.dst_port = tcp->dst_port;
-	key.src_port = tcp->src_port;
+	auth_key.dst_ip = ip->dst;
+	auth_key.src_ip = ip->src;
+	auth_key.dst_port = tcp->dst_port;
+	auth_key.src_port = tcp->src_port;
 
+        /*
+         
 	//calculate tcp header length
 	//value to multiply *4
 	//e.g. tcp->offset = 5 ; TCP Header Length = 5 x 4 byte = 20 byte
 	tcp_header_length = tcp->offset << 2; //SHL 2 -> *4 multiply
-
+        
 	//calculate payload offset and length
 	payload_offset = ETH_HLEN + ip_header_length + tcp_header_length;
 	payload_length = ip->tlen - ip_header_length - tcp_header_length;
@@ -129,19 +131,15 @@ int session_monitor(struct __sk_buff *skb) {
 	if ((p[0] == 'H') && (p[1] == 'E') && (p[2] == 'A') && (p[3] == 'D')) {
 		goto HTTP_MATCH;
 	}
+        */
 
 	//no HTTP match
 	//check if packet belong to an HTTP session
-    bpf_trace_printk("TCP SRC IP: %d", ip_hdr->saddr);
-    bpf_trace_printk(" PORT%d\n", bpf_ntohs(tcp_hdr->source));
-    bpf_trace_printk("TCP DEST IP: %d", ip_hdr->daddr);
-    bpf_trace_printk(" PORT%d\n", bpf_ntohs(tcp_hdr->dest));
+    bpf_trace_printk("TCP SRC IP: %d", ip->src);
+    bpf_trace_printk(" PORT%d\n", bpf_ntohs(tcp->src_port));
+    bpf_trace_printk("TCP DEST IP: %d", ip->dst);
+    bpf_trace_printk(" PORT%d\n", bpf_ntohs(tcp->dst_port));
     //TODO: METADATA
-    auth_key.src_ip = ip_hdr->saddr;
-    auth_key.src_port = bpf_ntohs(tcp_hdr->source);
-    auth_key.dst_ip = ip_hdr->daddr;
-    auth_key.dst_port = bpf_ntohs(tcp_hdr->dest);
-
 
     //TODO: take ROS_MASTER FROM AN ARG
     if (auth_key.src_port == ROS_MASTER_PORT || auth_key.dst_port == ROS_MASTER_PORT){
@@ -153,7 +151,7 @@ int session_monitor(struct __sk_buff *skb) {
 	//keep the packet and send it to userspace retruning -1
 	HTTP_MATCH:
 	//if not already present, insert into map <Key, Leaf>
-	sessions.lookup_or_init(&key,&zero);
+	sessions.lookup_or_init(&auth_key,&auth_leaf);
 
 	//send packet to userspace returning -1
 	KEEP:
