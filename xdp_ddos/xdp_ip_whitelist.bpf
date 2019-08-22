@@ -46,8 +46,6 @@ int xdp_prog1(struct CTXTYPE *ctx) {
     void* data_end = (void*)(long)ctx->data_end;
     void* data = (void*)(long)ctx->data;
 
-    bpf_trace_printk("examples/networking/xdp/xdp_drop_count: %u\n", data_end-data);
-
     struct ethhdr *eth = data;
 
     // drop packets
@@ -65,6 +63,7 @@ int xdp_prog1(struct CTXTYPE *ctx) {
     h_proto = eth->h_proto;
 
     // parse double vlans
+    /*
     #pragma unroll
     for (int i=0; i<2; i++) {
         if (h_proto == htons(ETH_P_8021Q) || h_proto == htons(ETH_P_8021AD)) {
@@ -77,13 +76,15 @@ int xdp_prog1(struct CTXTYPE *ctx) {
                 h_proto = vhdr->h_vlan_encapsulated_proto;
         }
     }
+    */
 
-    // Allow packet to pass if ip in whitelist
-    if (h_proto == htons(ETH_P_IP)) {
+    if (h_proto == htons(ETH_P_ARP)) {
+      return XDP_PASS;
+    } else if (h_proto == htons(ETH_P_IP)) {
+        // Allow packet to pass if ip in whitelist
         int ip = get_ipv4(data, nh_off, data_end);
-        bpf_trace_printk("ip %u\n", ip);
-        bpf_trace_printk("ip %u\n", ntohs(ip));
         bpf_trace_printk("ip %u\n", bpf_ntohl(ip));
+
         if (ip == NOIP) {
           bpf_trace_printk("NOIP\n");
           return XDP_DROP;
@@ -113,9 +114,12 @@ int xdp_prog1(struct CTXTYPE *ctx) {
           return XDP_DROP;
         }
         */
-    else
-        return XDP_DROP;
-
+    else {
+      bpf_trace_printk("h_proto %u\n", bpf_ntohs(h_proto));
+      bpf_trace_printk("OUTSIDE1\n");
+      return XDP_DROP;
+    }
+    bpf_trace_printk("OUTSIDE2\n");
     return XDP_DROP;
 }
 
