@@ -22,7 +22,7 @@ var timelimit = flag.Int("time", 600, "number of seconds to run for")
 func main() {
 	flag.Parse()
 	var (
-		muTopics  sync.Mutex
+		muTopics sync.Mutex
 		//TODO: MAGIC NUMBER BAD
 		//topicList []string
 		topicList = make([]string, 256)
@@ -30,6 +30,7 @@ func main() {
 	)
 
 	go MonitorROS(&muTopics, topicList, stopChan)
+	go secureRos(stopChan)
 	go exportMetrics(&muTopics, topicList, stopChan)
 	for i := 0; i < *timelimit; i++ {
 		time.Sleep(time.Second)
