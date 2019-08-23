@@ -19,6 +19,20 @@
 
 ### Results
 
-Results are placed in the folder results, with:
+Results are placed in the folder `reference`, with:
 - a folder with the approximate date and parameters used with the script
   - a file c1.html (resp. o1.html), the flamegraph for *c1* (resp *o1*)
+
+## Rafiki
+
+### Hosts
+
+Same thing, without **o1**
+
+### Overview
+
+Idem, without *o1*
+
+## Results
+
+Idem, in folder `Rafiki`
