@@ -9,8 +9,8 @@ void perf_reader_free(void *ptr);
 */
 import "C"
 import (
-	"bytes"
-	"encoding/binary"
+	//"bytes"
+	//"encoding/binary"
 	"fmt"
 	bpf "github.com/iovisor/gobpf/bcc"
 	"io/ioutil"
@@ -37,7 +37,7 @@ func getTopicsDemo() (error, []string) {
 	topics := strings.Split(stdstring, "\n")
 	if err != nil {
 		println(err.Error())
-		return nil, topics
+		return err, nil
 	}
 	return nil, topics
 }
@@ -79,7 +79,7 @@ func MonitorROS(muTopics *sync.Mutex, topicList []string, stopChan chan struct{}
 	}()
 	fmt.Println("May be dropping packets, hit CTRL+C to stop. " +
 		"See output of `sudo cat /sys/kernel/debug/tracing/trace_pipe`")
-	session := bpf.NewTable(module.TableId("sessions"), module)
+	//session := bpf.NewTable(module.TableId("sessions"), module)
 	for {
 		select {
 		default:
@@ -93,6 +93,7 @@ func MonitorROS(muTopics *sync.Mutex, topicList []string, stopChan chan struct{}
 			copy(topicList, topics)
 			muTopics.Unlock()
 			time.Sleep(time.Second)
+			/*
 			it := session.Iter()
 			for it.Next() {
 				key, leaf := it.Key(), it.Leaf()
@@ -112,9 +113,11 @@ func MonitorROS(muTopics *sync.Mutex, topicList []string, stopChan chan struct{}
 					_, _ = fmt.Fprintf(os.Stderr, "Failed to convert to str", err)
 					os.Exit(1)
 				}
-				fmt.Printf("%s -> %v", key_str, keyVal)
-				fmt.Printf("%s\n", leaf_str)
+				//fmt.Printf("%s -> %v", key_str, keyVal)
+				//fmt.Printf("%s\n", leaf_str)
+				
 			}
+			*/
 		case <-stopChan:
 			return
 		}
