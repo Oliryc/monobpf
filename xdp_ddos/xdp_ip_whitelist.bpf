@@ -78,9 +78,7 @@ int xdp_prog1(struct CTXTYPE *ctx) {
     }
     */
 
-    if (h_proto == htons(ETH_P_ARP)) {
-      return XDP_PASS;
-    } else if (h_proto == htons(ETH_P_IP)) {
+    if (h_proto == htons(ETH_P_IP)) {
         // Allow packet to pass if ip in whitelist
         int ip = get_ipv4(data, nh_off, data_end);
         bpf_trace_printk("ip %u\n", bpf_ntohl(ip));
@@ -114,7 +112,9 @@ int xdp_prog1(struct CTXTYPE *ctx) {
           return XDP_DROP;
         }
         */
-    else {
+    else if (h_proto == htons(ETH_P_ARP)) {
+      return XDP_PASS;
+    } else {
       bpf_trace_printk("h_proto %u\n", bpf_ntohs(h_proto));
       bpf_trace_printk("OUTSIDE1\n");
       return XDP_DROP;

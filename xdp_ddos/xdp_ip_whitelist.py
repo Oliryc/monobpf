@@ -18,7 +18,7 @@ import socket, struct
 # Like unblockedIp = ['10.244.3.24']
 unblockedIp = [
     "192.168.1.187", # Cyril’s computer
-    #  "192.168.1.98", # Lucian’s connector
+    "192.168.1.98", # Lucian’s connector
     "192.168.1.1", # Router
     "192.168.1.150", # Router
     "192.168.1.131", # ??
