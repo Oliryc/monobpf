@@ -1,5 +1,15 @@
 # Test traffic generation and draw flamegraph
 
+## Parameter of the script
+
+The `client.js` script we use below takes the following parameters:
+
+1. number of streams,
+2. amount to send per stream,
+3. amount to send per packet.
+
+*Note*: total amount per session = number of streams * amount per stream
+
 ## Reference implementation
 
 ### Hosts
@@ -36,3 +46,4 @@ Idem, without *o1*
 ## Results
 
 Idem, in folder `Rafiki`
+
