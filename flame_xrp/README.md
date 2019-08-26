@@ -27,12 +27,6 @@ The `client.js` script we use below takes the following parameters:
 
 **Note**: Try to keep *o1* and *s1* running about the same time
 
-### Results
-
-Results are placed in the folder `reference`, with:
-- a folder with the approximate date and parameters used with the script
-  - a file c1.html (resp. o1.html), the flamegraph for *c1* (resp *o1*)
-
 ## Rafiki
 
 ### Hosts
@@ -43,7 +37,29 @@ Same thing, without **o1**
 
 Idem, without *o1*
 
-## Results
+# Results
 
-Idem, in folder `Rafiki`
+### Results
+
+Results are placed in a folder named from the connector implementation, containing:
+- a folder with the approximate date and parameters used with the script
+  - a file c1.html (resp. o1.html), the flamegraph for *c1* (resp *o1*)
+
+Like so:
+
+    rafiki
+    ├── 2019-08-22-2_5000_1
+    │  ├── c1.html
+    │  └── o1.html
+    └── 2019-08-23-2_50000_1
+       ├── c1.html
+       └── o1.html
+    reference
+    ├── 2019-08-22-2_5000_1
+    │  ├── c1.html
+    │  └── o1.html
+    └── 2019-08-23-2_50000_1
+       ├── c1.html
+       └── o1.html
+
 
