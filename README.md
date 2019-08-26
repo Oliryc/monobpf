@@ -4,15 +4,17 @@ monitoring tools
 
 ~~Cf [ebpf.md](./ebpf.md) for background & notes about eBPF~~ (outdated, most recent version on overleaf)
 
-*****************************************
+## :fire: [Flamegraphs generated on the connectors](flame_xrp)
+
+This folder contains the protocol and the resulting flamegraphs generated on the connector. See the [Readme there](./flame_xrp/README.md)
+
+
 
 ## [bpf-http-extractor](bpf-http-extractor)
 
 This folder contains the code attempting to parse the HTTP headers & method names.
 
 It’s only getting short paquets without any HTTP payload.
-
-*****************************************
 
 ## exporter_*.yml file
 
