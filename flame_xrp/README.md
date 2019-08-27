@@ -10,7 +10,7 @@ The `client.js` script we use below takes the following parameters:
 
 *Note*: total amount per session = number of streams * amount per stream
 
-## Reference implementation
+## Reference implementation (commit ff20aff6f064945ef4b616baaa06990c2592707a (master branch at the time, tag: v22.5.0))
 
 ### Hosts
 
@@ -23,27 +23,36 @@ The `client.js` script we use below takes the following parameters:
 1. server.js script is continously running with *s1*.
 2. *o1* is launched with 0x to generate flamegraph
 2. *c1* is launched with 0x to generate flamegraph
-2. Run script client.js (with various parameter, see next section) on *c1*, once *c1* is connected to everything
+2. Run script client.js (with various parameter, see next section) on *c1*, once *c1* is connected to everything. Use the time command to know how much time it requires.
 
 **Note**: Try to keep *o1* and *s1* running about the same time
 
-## Rafiki
+Command to run *c1* and *o1*:
+    DEBUG='' node src/index.js
+
+## Rafiki (commit 32a6979424de209a5cca182f738a65157c159862 (master branch at the time))
 
 ### Hosts
 
-Same thing, without **o1**
+Same thing.
 
 ### Overview
 
-Idem, without *o1*
+Idem.
+
+Command to run *c1* and *o1*:
+    DEBUG='' 0x build/src/start.js
+
+We use Rafiki with Redis.
 
 # Results
 
-### Results
-
 Results are placed in a folder named from the connector implementation, containing:
-- a folder with the approximate date and parameters used with the script
-  - a file c1.html (resp. o1.html), the flamegraph for *c1* (resp *o1*)
+- a folder with the approximate date, nodejs version and parameters used with the script
+  - a file `c1.html` (resp. `o1.html`), the flamegraph for *c1* (resp *o1*)
+  - a file `duration` records the duration of the execution of the client script
+
+*Note*: If `o1.html` is absent, it is that *o1* was not running during this particular benchmark
 
 Like so:
 
@@ -61,5 +70,4 @@ Like so:
     └── 2019-08-23-2_50000_1
        ├── c1.html
        └── o1.html
-
 
