@@ -59,17 +59,17 @@ Results are placed in a folder named from the connector implementation, containi
 Like so:
 
     rafiki
-    ├── 2019-08-22-2_5000_1
+    ├── 2019-08-22-v8.11.3-2_5000_1
     │  ├── c1.html
     │  └── o1.html
-    └── 2019-08-23-2_50000_1
+    └── 2019-08-23-v12.9.0-2_5000_1
        ├── c1.html
        └── o1.html
     reference
-    ├── 2019-08-22-2_5000_1
+    ├── 2019-08-22-v8.11.3-2_5000_1
     │  ├── c1.html
     │  └── o1.html
-    └── 2019-08-23-2_50000_1
+    └── 2019-08-23-v8.11.3-2_50000_1
        ├── c1.html
        └── o1.html
 
