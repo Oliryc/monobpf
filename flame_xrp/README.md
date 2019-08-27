@@ -16,7 +16,9 @@ The `client.js` script we use below takes the following parameters:
 
 - A client connector **c1**
 - A server connector **s1**
-- Another server connector **o1**
+- Another “observer” connector **o1**
+
+*c1* and *o1* are both connected to *s1*.
 
 ### Overview
 
