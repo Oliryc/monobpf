@@ -28,6 +28,7 @@ The `client.js` script we use below takes the following parameters:
 **Note**: Try to keep *o1* and *s1* running about the same time
 
 Command to run *c1* and *o1*:
+    nvm use 12.9.0 # Or another version
     DEBUG='' node src/index.js
 
 ## Rafiki (commit 32a6979424de209a5cca182f738a65157c159862 (master branch at the time))
@@ -41,6 +42,7 @@ Same thing.
 Idem.
 
 Command to run *c1* and *o1*:
+    nvm use 12.9.0 # Or another version
     DEBUG='' 0x build/src/start.js
 
 We use Rafiki with Redis.
