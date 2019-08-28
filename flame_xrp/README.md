@@ -57,7 +57,7 @@ We use Rafiki with Redis.
 # Results
 
 Results are placed in a folder named from the connector implementation, containing:
-- a folder with the approximate date, nodejs version and parameters used with the script
+- a folder with the approximate date, nodejs version and parameters used with the script along with debugging directive
   - a file `c1.html` (resp. `o1.html`), the flamegraph for *c1* (resp *o1*)
   - a file `duration` records the duration of the execution of the client script
 
