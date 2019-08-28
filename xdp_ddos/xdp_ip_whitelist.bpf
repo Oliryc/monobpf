@@ -1,3 +1,9 @@
+// Based on https://github.com/iovisor/bcc/blob/master/examples/
+// networking/xdp/xdp_drop_count.py,
+// Copyright (c) 2016 PLUMgrid
+// Copyright (c) 2016 Jan Ruth
+// Licensed under the Apache License, Version 2.0 (the "License")
+// See http://apache.org/licenses/LICENSE-2.0
 #define KBUILD_MODNAME "foo"
 #include <uapi/linux/bpf.h>
 #include <linux/in.h>

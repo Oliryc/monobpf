@@ -3,11 +3,11 @@
 #
 # xdp_ip_whitelist.py Drop packet coming from ips not in a whitelist
 #
-# Copyright (c) 2019 SnT
 # Based on https://github.com/iovisor/bcc/blob/master/examples/networking/xdp/xdp_drop_count.py,
 # Copyright (c) 2016 PLUMgrid
 # Copyright (c) 2016 Jan Ruth
 # Licensed under the Apache License, Version 2.0 (the "License")
+# See http://apache.org/licenses/LICENSE-2.0
 
 from bcc import BPF
 import pyroute2
@@ -24,7 +24,7 @@ unblockedIp = [
     "192.168.1.131", # ??
     "192.168.1.68", # ??
 ]
-debug = 0
+debug = 1
 flags = 0
 
 def usage():
