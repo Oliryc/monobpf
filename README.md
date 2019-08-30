@@ -19,6 +19,10 @@ Folder containing the XDP-based IP whitelisting solution
 
 Folder containing the modules added to the BCC PCP PMDA and their configuration
 
+## Other details
+
+All file at the root of this repository [are described](./WHATSWHAT.txt).
+
 --------------------------------------
 
 
