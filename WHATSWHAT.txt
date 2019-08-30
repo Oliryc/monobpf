@@ -1,0 +1,54 @@
+antlr              // Experimentation to write USDT probe in javascript code, using ANTLR
+bcc_tuto           // Notes taken while following the bcc tutorial
+bpf-http-extractor  // First attempt to extract key features of http packets
+chaine.md           // Table with the progress at some point
+config.bcc          // Intermediary backup of the BCC configuration (more recent version in pcp/ folder below)
+config.default      // PCP logging default configuration
+dump_evocati.pcap   // Dump of packets
+dump_net.pcap       // same
+ebpf-sample-server  // Sample file to be served in a container, used for test
+ebpf.md             // Old version of my notes
+ebpf_patch          // A patch that as been usefull to build & install the BCC connector for Prometheus
+exporter_tcplife.yml   // Adaptation of the tcp_life exemple for Prometheus
+exporter_tcplife_httpd.yml    // eBPF program for Prometheus
+exporter_tpcconnlat.yml       // eBPF program for Prometheus
+flame_node_gc                  // Trace of a run of node to generate flamegraph
+flame_node_gc.svg             // Flamegraph on node
+flame_xrp                      // Folder containing the parameters, protocol and scripts used for the generation of flamegraphs
+http-filter             // Another attempt to filter http packets
+http.sh                // Sample script to generate http traffic during test
+ilp-connector-docker  // Configuration for the reference connector inside docker
+LICENSE
+monitoring_container    // Attempt to place the monitoring system in a container (not successful)
+node_gc_tracing.py      // Attempt to trace GC call
+nodejs_toy             // Source code of the toy nodeJS program used in a demonstration of the capabilities of the monitoring system
+ntoip.py            // Script to convert IP address from the way you get them in XDP to human representation like 157.125.69.147
+packet_trace        // Attempt to trace packet in Go
+patch_vector_pmda  // Add some include for the vector pmda for PCP
+pcp  // Folder containing the modules and their configuration added to PCP
+pcp-bcc.conf     // Old pcp-bcc pmda configuration
+prometheus.yml    // Sample Prometheus configuration
+Prometheus Time Series Collection and Processing Server.png                 // Prometheus interface screenshot
+Prometheus Time Series Collection and Processing Server Filtered.png                 // Prometheus interface screenshot
+Prometheus Time Series Collection and Processing Server Line.png                 // Prometheus interface screenshot
+README.md
+sample-nodejs            // NodeJS script to test garbage collection (run with `node --expose-gc app.js`)
+sample_programm_to_be_monitored.py
+schema_pcp_vector_node           // Draw.io schema
+schema_pcp_vector_node.png
+schema_pcp_vector_node.svg
+schema_prometheus_node           // Draw.io schema
+schema_prometheus_node.png
+schema_prometheus_node.svg
+schema_promo_httpd_node           // Draw.io schema
+schema_promo_httpd_node.png
+schema_promo_httpd_node.svg
+session-monitor            // Code Sean shared with me
+size_checking_xdp       // Attempt to check size with Python and UDP
+to_be_monitored.c    // Sample program to be monitored
+usdt_inside_node.md    // Notes about creating USDT probes inside node
+usdt_node              // Sample NodeJS program containing USDT probes
+ws.html            // Useful script to test websocket protocol, with http://gwsocket.io/
+ws_capture           // Some of the capture done on WebSocket Traffic
+xdp_ddos            // Script to whitelist IP address
+xdpcap-dump-whole-packet          // Kind of Wireshark for XDP
