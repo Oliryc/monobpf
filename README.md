@@ -4,10 +4,22 @@ monitoring tools
 
 ~~Cf [ebpf.md](./ebpf.md) for background & notes about eBPF~~ (outdated, most recent version on overleaf)
 
+--------------------------------------
+
 ## :fire: [flame_xrp](flame_xrp): Flamegraphs generated on the connectors
 
 This folder contains the protocol and the resulting flamegraphs generated on the connector. See the [Readme there](./flame_xrp/README.md)
 
+
+## xdp_ddos
+
+Folder containing the XDP-based IP whitelisting solution
+
+## pcp
+
+Folder containing the modules added to the BCC PCP PMDA and their configuration
+
+--------------------------------------
 
 
 ## [bpf-http-extractor](bpf-http-extractor)

@@ -1,0 +1,5 @@
+/usr/include/pcp/builddefs
+
+
+PCP_INC_DIR=/usr/include/pcp/
+PCP_DIR=
