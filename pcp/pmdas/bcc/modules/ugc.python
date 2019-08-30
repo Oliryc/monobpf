@@ -177,10 +177,10 @@ class PCPBCCModule(PCPBCCBase):
                         (e.string1, e.string2, e.field1, e.field3, e.field2, e.field4)
                 self.probes.append(
                     Probe("mem__pool__gc__begin", "mem__pool__gc__end",
-                          self.lang_specific['java'].begin_save, self.lang_specific['java'].end_save, formatter, self.log))
+                          self.lang_specific['java'].begin_save, self.lang_specific['java'].end_save, formatter))
                 self.probes.append(
                     Probe("gc__begin", "gc__end",
-                          "", "", lambda _: "no additional info available", self.log))
+                          "", "", lambda _: "no additional info available"))
             elif self.lang in ("node"):
                 descs = {"GC scavenge": 1, "GC mark-sweep-compact": 2,
                          "GC incremental mark": 4, "GC weak callbacks": 8}
@@ -189,7 +189,7 @@ class PCPBCCModule(PCPBCCBase):
                           self.lang_specific['node'].begin_save, self.lang_specific['node'].end_save,
                           lambda e: str.join(", ",
                                              [desc for desc, val in descs.items()
-                                              if e.field1 & val != 0]), self.log))
+                                              if e.field1 & val != 0])))
 
             #elif self.lang in ("perl",):
             #    entry_probe = "sub__entry"
@@ -299,23 +299,17 @@ class PCPBCCModule(PCPBCCBase):
 
 
 class Probe(object):
-    def __init__(self, begin, end, begin_save, end_save, formatter, log):
+    def __init__(self, begin, end, begin_save, end_save, formatter):
         self.begin = begin
         self.end = end
         self.begin_save = begin_save
         self.end_save = end_save
         self.formatter = formatter
-        # Logging function
-        self.log = log
 
         # TODO Remove this if not bound to a parameter in config file
         self.minimum = 0
 
     def generate(self):
-
-        # XXX DBG
-        self.begin = "%s_1_" % self.begin
-
         text = """
 int trace_%s(struct pt_regs *ctx) {
 
@@ -351,26 +345,11 @@ int trace_%s(struct pt_regs *ctx) {
 }
         """ % (self.begin, self.begin_save, self.end,
                self.minimum * 1000000, self.end_save)
-        self.log(text)
         return text
 
     def attach(self, usdt):
-        self.log("Enabling probes")
-        try:
-            self.log("%%%%%% %s, %s" % (self.begin, "trace_%s" % self.begin))
-            usdt.enable_probe(self.begin, "trace_%s" % self.begin)
-            self.log("========================")
-            self.log("%%%%%% %s, %s" % (self.end, "trace_%s" % self.end))
-            usdt.enable_probe(self.end, "trace_%s" % self.end)
-
-            # XXX DBG
-            self.begin = "%s_2_" % self.begin
-
-        except Exception as e:
-            self.log("Exn Type: "+str(type(e)))
-            self.log("Exn: "+str(e))
-            raise e
-        self.log("Enabled probes")
+        usdt.enable_probe(self.begin, "trace_%s" % self.begin)
+        usdt.enable_probe(self.end, "trace_%s" % self.end)
 
     def format(self, data):
         return self.formatter(data)
