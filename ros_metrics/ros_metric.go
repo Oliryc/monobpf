@@ -29,7 +29,9 @@ func main() {
 		stopChan  = make(chan struct{})
 	)
 
-	go MonitorROS(&muTopics, topicList, stopChan)
+	go MonitorROSXDP(&muTopics, topicList, stopChan)
+	//TODO: THIS
+	go MonitorROSSocket(&muTopics, topicList, stopChan)
 	go secureRos(stopChan)
 	go exportMetrics(&muTopics, topicList, stopChan)
 	for i := 0; i < *timelimit; i++ {

@@ -30,6 +30,12 @@ struct Leaf {
 	int allow;            //timestamp in ns
 };
 
+
+/* Share data between the layers with this */
+struct meta_info {
+	__u32 parse;
+} __attribute__((aligned(4)));
+
 //BPF_TABLE(map_type, key_type, leaf_type, table_name, num_entry)
 //map <Key, Leaf>
 //tracing sessions having same Key(dst_ip, src_ip, dst_port,src_port)
@@ -47,7 +53,9 @@ int session_monitor(struct CTXTYPE *ctx) {
     uint32_t head_key =0;
     uint32_t tot_len = 0;
     long *hs_value;
+   	int ret;
     long *head_value;
+    struct meta_info *meta;
     auth_leaf.allow = 0;
     eth_hdr = (struct ethhdr *)data;
 
@@ -63,11 +71,23 @@ int session_monitor(struct CTXTYPE *ctx) {
         bpf_trace_printk("=== Abort 3\n");
         return XDP_PASS;
     }
+   	ret = bpf_xdp_adjust_meta(ctx, -(int)sizeof(*meta));
+  	if (ret < 0)
+    	return XDP_ABORTED;
+
     bpf_trace_printk("TCP SRC IP: %d", ip_hdr->saddr);
     bpf_trace_printk(" PORT%d\n", bpf_ntohs(tcp_hdr->source));
     bpf_trace_printk("TCP DEST IP: %d", ip_hdr->daddr);
     bpf_trace_printk(" PORT%d\n", bpf_ntohs(tcp_hdr->dest));
-    //TODO: METADATA
+
+	/* Check data_meta have room for meta_info struct */
+	meta = (void *)(unsigned long)ctx->data_meta;
+	if (meta + 1 > data)
+		return XDP_ABORTED;
+    //TODO: Actually pull from the table
+    if(auth_key.src_ip){
+        meta->parse=1;
+       }
     auth_key.src_ip = ip_hdr->saddr;
     auth_key.src_port = bpf_ntohs(tcp_hdr->source);
     auth_key.dst_ip = ip_hdr->daddr;

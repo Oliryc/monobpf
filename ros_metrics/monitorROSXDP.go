@@ -15,34 +15,11 @@ import (
 	bpf "github.com/iovisor/gobpf/bcc"
 	"io/ioutil"
 	"os"
-	"os/exec"
-	"strings"
 	"sync"
 	"time"
 )
 
-type Key struct {
-	Src_ip   uint32 //source ip
-	Dst_ip   uint32 //destination ip
-	Src_port uint16 //source port
-	Dst_port uint16 //destination port
-}
-
-func getTopicsDemo() (error, []string) {
-	app := "/opt/ros/melodic/bin/rostopic"
-	arg0 := "list"
-	cmd := exec.Command(app, arg0)
-	stdout, err := cmd.Output()
-	stdstring := string(stdout)
-	topics := strings.Split(stdstring, "\n")
-	if err != nil {
-		println(err.Error())
-		return nil, topics
-	}
-	return nil, topics
-}
-
-func MonitorROS(muTopics *sync.Mutex, topicList []string, stopChan chan struct{}) {
+func MonitorROSXDP(muTopics *sync.Mutex, topicList []string, stopChan chan struct{}) {
 	var (
 		device = "lo"
 	)
@@ -102,18 +79,18 @@ func MonitorROS(muTopics *sync.Mutex, topicList []string, stopChan chan struct{}
 					_, _ = fmt.Fprint(os.Stderr, "Failed to extract bytes")
 					os.Exit(1)
 				}
-				key_str, err := session.KeyBytesToStr(key)
+				keyStr, err := session.KeyBytesToStr(key)
 				if err != nil {
-					_, _ = fmt.Fprintf(os.Stderr, "Failed to convert to str", err)
+					_, _ = fmt.Fprintf(os.Stderr, "Failed to convert to str: %s", err)
 					os.Exit(1)
 				}
-				leaf_str, err := session.LeafBytesToStr(leaf)
+				leafStr, err := session.LeafBytesToStr(leaf)
 				if err != nil {
-					_, _ = fmt.Fprintf(os.Stderr, "Failed to convert to str", err)
+					_, _ = fmt.Fprintf(os.Stderr, "Failed to convert to str: %s", err)
 					os.Exit(1)
 				}
-				fmt.Printf("%s -> %v", key_str, keyVal)
-				fmt.Printf("%s\n", leaf_str)
+				fmt.Printf("%s -> %v", keyStr, keyVal)
+				fmt.Printf("%s\n", leafStr)
 			}
 		case <-stopChan:
 			return

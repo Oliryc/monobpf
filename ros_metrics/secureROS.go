@@ -16,6 +16,13 @@ import (
 	"time"
 )
 
+type Key struct {
+	SrcIp   uint32 //source ip
+	DstIp   uint32 //destination ip
+	SrcPort uint16 //source port
+	DstPort uint16 //destination port
+}
+
 func secureRos(stopChan chan struct{}) {
 	var (
 		device = "lo"
