@@ -25,9 +25,9 @@ export LAUNCH_PID
 echo "Talker STARTED WITH PID ${TALK_PID[@]}"
 echo "Listener STARTED WITH PID ${LISTEN_PID[@]}"
 sleep 5
-go run *.go &
-export APP_PID=$!
-echo "PROCESS STARTED WITH PID $APP_PID"
+#rostopic hz /chatter &
+#export APP_PID=$!
+#echo "PROCESS STARTED WITH PID $APP_PID"
 sleep 100
 kill -2 $APP_PID
 for ((i=1; i<=$val; i++))
