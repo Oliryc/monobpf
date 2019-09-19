@@ -55,8 +55,8 @@ func exportMetrics(muTopics *sync.Mutex, topicList []string, stopChan chan struc
 			muTopics.Unlock()
 			localList = deleteEmpty(localList)
 			listLen := len(localList)
-			fmt.Printf("Current list %v\n", localList)
-			fmt.Printf("Current metric val? %d\n", listLen)
+			//fmt.Printf("Current list %v\n", localList)
+			//fmt.Printf("Current metric val? %d\n", listLen)
 			err = metric.Set(uint64(listLen))
 			if err != nil {
 				log.Fatal("Could not set metric, error: ", err)

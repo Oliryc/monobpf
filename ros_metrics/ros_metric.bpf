@@ -105,7 +105,7 @@ int session_monitor(struct CTXTYPE *ctx) {
       u16 tcphdr_length = tcp_hdr->doff;
     char *http_hdr = (char *)((u8 *)tcp_hdr + tcphdr_length * 4);
     char *http_hdr2 = (char *)((u32 *)tcp_hdr + 8);
-    bpf_trace_printk("data: %p\n", data);
+    /*bpf_trace_printk("data: %p\n", data);
     bpf_trace_printk("eth_hdr: %p\n", eth_hdr);
     bpf_trace_printk("ip_hdr: %p\n", ip_hdr);
     bpf_trace_printk("ip_hdr->tot_len: %u\n", bpf_ntohs(ip_hdr->tot_len));
@@ -118,6 +118,7 @@ int session_monitor(struct CTXTYPE *ctx) {
     bpf_trace_printk("data_end-data : %u\n", (data_end-data));
     bpf_trace_printk("header_size(byte) : %u\n", sizeof(struct tcphdr)+sizeof(struct iphdr)+sizeof(struct ethhdr));
     bpf_trace_printk("==============================\n");
+    */
     
     hs_value = head_size.lookup(&hs_key);
     if (!hs_value){

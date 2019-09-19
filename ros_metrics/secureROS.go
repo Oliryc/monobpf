@@ -62,7 +62,7 @@ func secureRos(stopChan chan struct{}) {
 	for {
 		select {
 		default:
-			fmt.Printf("Filtering online")
+			fmt.Printf("Filtering online\n")
 			time.Sleep(time.Second)
 
 		case <-stopChan:
