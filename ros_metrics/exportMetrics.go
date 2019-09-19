@@ -12,9 +12,9 @@ func exportMetrics(muTopics *sync.Mutex, topicList []string, stopChan chan struc
 	metric, err := speed.NewPCPSingletonMetric(
 		0,
 		"count",
-		speed.Uint64Type,                                                // type
-		speed.CounterSemantics,                                         // semantics
-		speed.OneUnit,                                                  // unit
+		speed.Uint64Type,       // type
+		speed.CounterSemantics, // semantics
+		speed.OneUnit,          // unit
 		"A Simple Metric",
 	)
 	if err != nil {
@@ -54,10 +54,10 @@ func exportMetrics(muTopics *sync.Mutex, topicList []string, stopChan chan struc
 			copy(localList, topicList)
 			muTopics.Unlock()
 			localList = deleteEmpty(localList)
-			listlen := len(localList)
+			listLen := len(localList)
 			//fmt.Printf("Current list %v\n", localList)
-			//fmt.Printf("Current metric val? %d\n", listlen)
-			err = metric.Set(uint64(listlen))
+			//fmt.Printf("Current metric val? %d\n", listLen)
+			err = metric.Set(uint64(listLen))
 			if err != nil {
 				log.Fatal("Could not set metric, error: ", err)
 			}
@@ -68,12 +68,12 @@ func exportMetrics(muTopics *sync.Mutex, topicList []string, stopChan chan struc
 	}
 
 }
-func deleteEmpty (s []string) []string {
-    var r []string
-    for _, str := range s {
-        if str != "" {
-            r = append(r, str)
-        }
-    }
-    return r
+func deleteEmpty(s []string) []string {
+	var r []string
+	for _, str := range s {
+		if str != "" {
+			r = append(r, str)
+		}
+	}
+	return r
 }
