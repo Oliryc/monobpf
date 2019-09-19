@@ -41,6 +41,24 @@ struct meta_info {
 //tracing sessions having same Key(dst_ip, src_ip, dst_port,src_port)
 BPF_HASH(sessions, struct Key, struct Leaf, 1024);
 
+int session_parser(struct __sk_buff *ctx)
+    void *data      = (void *)(unsigned long)ctx->data;
+	void *data_end  = (void *)(unsigned long)ctx->data_end;
+	void *data_meta = (void *)(unsigned long)ctx->data_meta;
+	struct meta_info *meta = data_meta;
+
+	/* Check XDP gave us some data_meta */
+	if (meta + 1 > data) {
+		 /* Skip "accept" if no data_meta is avail */
+		return TC_ACT_OK;
+	}
+
+	/* Hint: See func tc_cls_act_is_valid_access() for BPF_WRITE access */
+    bpf_trace_printk(" META%d\n", meta->parse);
+
+	return TC_ACT_OK;
+}
+
 int session_monitor(struct CTXTYPE *ctx) {
     void* data_end = (void*)(long)ctx->data_end;
     void* data = (void*)(long)ctx->data;

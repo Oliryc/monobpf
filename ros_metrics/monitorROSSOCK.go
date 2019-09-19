@@ -53,7 +53,8 @@ func MonitorROSSocket(muTopics *sync.Mutex, topicList []string, stopChan chan st
 		"-DCTXTYPE=" + ctxtype,
 	})
 	defer module.Close()
-	fn, err := module.Load("session_monitor", C.BPF_PROG_TYPE_XDP, 1, 65536)
+	fn, err := module.LoadNet("session_parser")
+	//fn, err := module.Load("session_monitor", C.BPF_PROG_TYPE_XDP, 1, 65536)
 	if err != nil {
 		_, err = fmt.Fprintf(os.Stderr, "Failed to load xdp prog: %v\n", err)
 		os.Exit(1)
@@ -87,29 +88,29 @@ func MonitorROSSocket(muTopics *sync.Mutex, topicList []string, stopChan chan st
 			muTopics.Unlock()
 			time.Sleep(time.Second)
 			/*
-			it := session.Iter()
-			for it.Next() {
-				key, leaf := it.Key(), it.Leaf()
-				var keyVal Key
-				err := binary.Read(bytes.NewBuffer(key), binary.LittleEndian, &keyVal)
-				if err != nil {
-					_, _ = fmt.Fprint(os.Stderr, "Failed to extract bytes")
-					os.Exit(1)
-				}
-				keyStr, err := session.KeyBytesToStr(key)
-				if err != nil {
-					_, _ = fmt.Fprintf(os.Stderr, "Failed to convert to str: %s", err)
-					os.Exit(1)
-				}
-				leafStr, err := session.LeafBytesToStr(leaf)
-				if err != nil {
-					_, _ = fmt.Fprintf(os.Stderr, "Failed to convert to str: %s", err)
-					os.Exit(1)
-				}
-				//fmt.Printf("%s -> %v", keyStr, keyVal)
-				//fmt.Printf("%s\n", leafStr)
+				it := session.Iter()
+				for it.Next() {
+					key, leaf := it.Key(), it.Leaf()
+					var keyVal Key
+					err := binary.Read(bytes.NewBuffer(key), binary.LittleEndian, &keyVal)
+					if err != nil {
+						_, _ = fmt.Fprint(os.Stderr, "Failed to extract bytes")
+						os.Exit(1)
+					}
+					keyStr, err := session.KeyBytesToStr(key)
+					if err != nil {
+						_, _ = fmt.Fprintf(os.Stderr, "Failed to convert to str: %s", err)
+						os.Exit(1)
+					}
+					leafStr, err := session.LeafBytesToStr(leaf)
+					if err != nil {
+						_, _ = fmt.Fprintf(os.Stderr, "Failed to convert to str: %s", err)
+						os.Exit(1)
+					}
+					//fmt.Printf("%s -> %v", keyStr, keyVal)
+					//fmt.Printf("%s\n", leafStr)
 
-			}
+				}
 			*/
 		case <-stopChan:
 			return
